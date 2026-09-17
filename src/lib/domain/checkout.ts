@@ -1,0 +1,31 @@
+import { z } from 'zod';
+import type { Price, ProductCandidate, SafePreview } from './commerce';
+
+export type CommerceMode = 'REAL_COMMERCE_MODE' | 'SANDBOX_COMMERCE_MODE';
+export interface Merchant { id: string; name: string; domain: string; rail: string; isTest: boolean; currency: string }
+export interface ProviderOrder {
+  id: string; merchantId: string | null; status: string; approvedAmount: Price | null;
+  chargedAmount: Price | null; orderUrl: string | null; timestamp: string | null;
+  test: boolean; retryAction: string | null; errorCode: string | null;
+}
+export interface ExploreResult { orderId: string | null; merchantId: string | null; status: string }
+export type CheckoutStage = 'selected' | 'exploring' | 'ready' | 'fulfillment' | 'quoted' | 'blocked' | 'dispatching' | 'processing' | 'succeeded' | 'failed' | 'unknown' | 'timed-out';
+export interface CheckoutSession {
+  id: string; mode: CommerceMode; product: ProductCandidate; quantity: number;
+  stage: CheckoutStage; message: string; merchant: Merchant | null;
+  preview: SafePreview | null; quoteId: string | null; quoteExpiresAt: string | null;
+  order: ProviderOrder | null; approvedAt: string | null;
+  canConfirm: boolean; setup: { testCardConfigured: boolean; cardSetupUrl: string; guideUrl: string; profileSetupUrl?: string };
+}
+export interface SandboxInfo { merchant: Merchant; products: ProductCandidate[]; blocked: boolean; message: string }
+export const checkoutSelectionSchema = z.object({ missionId: z.string().uuid(), productId: z.string().min(1).max(160) }).strict();
+export const checkoutActionSchema = z.object({ checkoutId: z.string().uuid() }).strict();
+export const checkoutQuoteSchema = checkoutActionSchema.extend({ fulfillmentId: z.string().min(1).max(2000).optional() }).strict();
+export const sandboxSelectionSchema = z.object({ productId: z.string().min(1).max(160) }).strict();
+export const sandboxConsentSchema = checkoutActionSchema.extend({ quoteId: z.string().uuid(), confirmed: z.literal(true), confirmationText: z.literal('Confirm Test Purchase') }).strict();
+export type SandboxConsent = z.infer<typeof sandboxConsentSchema>;
+export interface SandboxDispatch {
+  merchantId: string; sku: string; quantity: number; amount: Price;
+  maxTotalMinor: number; fulfillmentId?: string; approvedAt: string;
+  confirmationText: 'Confirm Test Purchase'; originalRequest: string;
+}
