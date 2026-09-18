@@ -46,7 +46,7 @@ export function useMission() {
       : step));
   }, []);
 
-  const run = useCallback(async (prompt: string) => {
+  const submit = useCallback(async (url: string, body: unknown) => {
     // This synchronous guard also catches double clicks before React re-renders.
     if (controller.current) return;
     const request = new AbortController();
@@ -55,15 +55,15 @@ export function useMission() {
     const timeout = setTimeout(() => request.abort(new Error("This request timed out. You can try again when ready.")), 95_000);
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
-      const response = await fetch("/api/missions", {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify(body),
         signal: request.signal,
       });
       if (!response.ok) {
-        const body: unknown = await response.json().catch(() => null);
-        throw new Error(publicMessage(body, "The mission could not be started. Please try again."));
+        const responseBody: unknown = await response.json().catch(() => null);
+        throw new Error(publicMessage(responseBody, "The mission could not be started. Please try again."));
       }
       if (!response.body || !response.headers.get("content-type")?.includes("application/x-ndjson")) {
         throw new Error("The server returned an unexpected response. Please try again.");
@@ -130,5 +130,8 @@ export function useMission() {
     }
   }, []);
 
-  return { mission, steps, intent, isRunning, error, run, reset, cancel, status };
+  const run = useCallback((prompt: string) => submit("/api/missions", { prompt }), [submit]);
+  const runFromIntent = useCallback((productIntent: ProductIntent) => submit("/api/inspect/search", { intent: productIntent }), [submit]);
+
+  return { mission, steps, intent, isRunning, error, run, runFromIntent, reset, cancel, status };
 }

@@ -1,6 +1,6 @@
-# SENTINEL — Phase 3
+# SENTINEL — Phase 4A
 
-SENTINEL turns a Request Mode prompt into real Agnic product discovery, an evidence-based shortlist, merchant preparation, and a safe checkout quote. The light dashboard shows actual server activity, fulfillment choices, budget blocks, and a separate sandbox checkout flow. Inspect and Build remain upcoming.
+SENTINEL turns a Request Mode prompt, or an Inspect Mode photo, into real Agnic product discovery, an evidence-based shortlist, merchant preparation, and a safe checkout quote. The light dashboard shows actual server activity, fulfillment choices, budget blocks, and a separate sandbox checkout flow. Build remains upcoming. See [PHASE4A_REPORT.md](PHASE4A_REPORT.md) for what changed in this phase.
 
 **Real purchase execution is unconditionally disabled.** The only dispatch implementation is a separate test flow requiring server-verified `is_test=true`, an explicitly configured test-card alias, a fresh quote, and the user's confirmation.
 
@@ -33,10 +33,25 @@ Open [SENTINEL](http://127.0.0.1:3001). Scripts bind loopback only. Rebuild and 
 | Explore, merchant metadata and sandbox execution | `src/lib/server/adapters/agnic-checkout.ts` |
 | Mission and checkout orchestration | `src/lib/server/services/request-mission.ts`, `checkout.ts`, `live-contracts.ts`, `runtime.ts` |
 | Server safety and dispatch journal | `src/lib/server/safety.ts`, `dispatch-journal.ts`, `http.ts`, `checkout-route.ts`, `provider-error.ts` |
+| Inspect Mode: image validation, analysis, conversion | `src/lib/server/image-validation.ts`, `services/inspection.ts`, `lib/domain/inspection.ts` |
 | Light dashboard and checkout UI | `src/components/sentinel/`, `src/hooks/`, `src/app/globals.css` |
-| API boundaries | `src/app/api/missions/`, `checkout/`, `sandbox/`, `status/` |
+| API boundaries | `src/app/api/missions/`, `checkout/`, `sandbox/`, `status/`, `inspect/` |
 
 All credentials and authenticated requests stay server-side. Agnic adapters use a fixed origin, allowlisted operations, disabled redirects, bounded timeouts, and sanitized errors. Browser data contains normalized public fields, never raw provider responses, card information, delivery profiles, or internal signed browser URLs. Legacy demo data remains only for offline regression tests; live failures do not fall back to invented products.
+
+## Inspect Mode
+
+Inspect Mode turns an uploaded photo into the same `ProductIntent` Request Mode produces, then hands it to the identical discovery pipeline:
+
+```
+image → one bounded multimodal analysis call → InspectionAnalysis → ProductIntent → existing Agnic search, ranking, selection, and checkout review
+```
+
+- **Live:** image upload, server-side validation (magic-byte sniffing, 10 MB cap, JPG/PNG/WEBP only), the single multimodal analysis call (`analyzeInspectionImage` in `src/lib/server/adapters/openai.ts`, model configurable via `SENTINEL_INSPECT_MODEL`), conversion to a `ProductIntent` (`buildProductIntentFromInspection` in `src/lib/domain/inspection.ts`), and the full existing Agnic search/rank/select/checkout flow via `RequestMissionService.runFromIntent`, which reuses `filterCandidates`/`applyEvaluations`/`rankCandidates` unchanged and skips the text-understanding call entirely.
+- **Honesty rules:** the model never fills in a brand, model, or dimension it cannot see; unknown compatibility facts (e.g. an unmeasured caster stem) are carried into the intent as explicit "not confirmed by the uploaded photo" caveats, so the existing evaluator continues to require exact-device evidence before marking anything `VERIFIED`.
+- **Fixture-tested:** `src/lib/server/demo/inspection-fixtures.ts` provides a `broken-office-chair-caster` fixture used by the automated test suite; it is never used in normal execution. A local, explicit `SENTINEL_INSPECT_FIXTURE=<name>` env var can bypass the paid call during development only — the UI always marks that result as **DEVELOPMENT FIXTURE**.
+- **Cost control:** at most one multimodal call per inspection, plus the same optional second ranking call Request Mode already makes. No recursive vision calls, no automatic retries, no analysis while the user is still choosing a file.
+- **Still blocked:** checkout selection from an inspected product reaches the same Agnic sandbox merchant blocker described below and in `PHASE3_REPORT.md`; nothing in this phase changes that.
 
 ## Request and checkout flow
 
@@ -59,6 +74,8 @@ All mutation bodies are strict JSON. Same-origin/loopback checks, bounded bodies
 | --- | --- |
 | `GET /api/status` | Credential detection and local AI budget; no authentication probe |
 | `POST /api/missions` | `{prompt}`; JSON result or NDJSON activity stream |
+| `POST /api/inspect/analyze` | `{imageBase64, mimeType}`; one bounded multimodal analysis, or a labelled dev fixture |
+| `POST /api/inspect/search` | `{intent}`; runs the same mission pipeline as `/api/missions`, skipping intent extraction |
 | `POST /api/checkout/session` | `{missionId, productId}`; create/reuse owned selection |
 | `POST /api/checkout/prepare` | `{checkoutId}`; verify or explore selected merchant |
 | `POST /api/checkout/quote` | `{checkoutId, fulfillmentId?}`; safe quote or fulfillment re-quote |
@@ -112,8 +129,8 @@ npm test
 npm run build
 ```
 
-Automated integration tests use injected provider fixtures. See [PHASE3_REPORT.md](PHASE3_REPORT.md) for the current test count, production build outcome, live search/explore/quote results, sandbox blockers, and secret isolation checks.
+Automated integration tests use injected provider fixtures and never spend AI money. See [PHASE3_REPORT.md](PHASE3_REPORT.md) for Phase 3's measured results and [PHASE4A_REPORT.md](PHASE4A_REPORT.md) for Inspect Mode's live/fixture-tested/blocked status, test count, and validation results.
 
 Official references: [Agnic REST checkout](https://docs.agnic.ai/docs/api-reference/checkout), [test checkout](https://docs.agnic.ai/docs/agentic-commerce/testing), [pricing](https://docs.agnic.ai/docs/agentic-commerce/limits-and-pricing), [OpenAI Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna), [Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), and [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
 
-Phase 3 stops here. Inspect, Build, real cards, real orders, and Phase 4 are not implemented.
+Phase 4A stops here. Build, real cards, and real orders are not implemented.
