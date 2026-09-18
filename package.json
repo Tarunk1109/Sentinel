@@ -8,7 +8,8 @@
     "start": "next start --hostname 127.0.0.1",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:agnic": "node --env-file-if-exists=.env.local scripts/check-agnic.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

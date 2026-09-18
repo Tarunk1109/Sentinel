@@ -14,7 +14,10 @@ const merchant: Merchant = { id: product.merchantId!, name: 'Fixture test mercha
 const testProduct = { ...product, price: { amountMinor: 100, currency: 'CAD' as const } };
 const preview: SafePreview = { source: 'agnic', status: 'quoted', productId: product.id, quantity: 1, browsePrice: testProduct.price, subtotal: testProduct.price, shipping: null, tax: null, amount: testProduct.price, amountIsFinal: true, priceChanged: false, requirements: [], message: 'Fixture test quote', quotedAt: '2026-09-17T10:00:00Z', requiresFulfillment: false, selectedFulfillmentId: null };
 const order: ProviderOrder = { id: 'order_fixture', merchantId: merchant.id, status: 'pending', approvedAmount: testProduct.price, chargedAmount: null, orderUrl: null, timestamp: null, test: true, retryAction: null, errorCode: null };
-function setup(selectionProduct = product) {
+function mockJournal() {
+  return { claim: vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined), record: vi.fn<(id: string, orderId: string | null, status: string) => Promise<void>>().mockResolvedValue(undefined) };
+}
+function setup(selectionProduct = product, journal = mockJournal()) {
   const provider = {
     searchProducts: vi.fn<CheckoutProvider['searchProducts']>().mockResolvedValue([testProduct]),
     previewOrder: vi.fn<CheckoutProvider['previewOrder']>().mockResolvedValue(preview),
@@ -27,7 +30,6 @@ function setup(selectionProduct = product) {
     dispatchSandbox: vi.fn<CheckoutProvider['dispatchSandbox']>().mockResolvedValue(order),
   } satisfies CheckoutProvider;
   const select = vi.fn().mockReturnValue({ product: selectionProduct, intent });
-  const journal = { claim: vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined), record: vi.fn<(id: string, orderId: string | null, status: string) => Promise<void>>().mockResolvedValue(undefined) };
   return { provider, select, journal, service: new CheckoutService(provider, select, journal) };
 }
 async function quoted(service: CheckoutService) {
@@ -184,7 +186,11 @@ describe('once-only dispatch and truthful order status', () => {
     expect(journal.claim).toHaveBeenCalledTimes(1);
     expect(provider.dispatchSandbox).toHaveBeenCalledTimes(1);
     expect(journal.claim.mock.invocationCallOrder[0]).toBeLessThan(provider.dispatchSandbox.mock.invocationCallOrder[0]);
-    expect(journal.record).toHaveBeenCalledWith(state.id, order.id, 'pending');
+    const attemptId = journal.claim.mock.calls[0][0];
+    expect(attemptId).toMatch(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+    expect(attemptId).not.toBe(state.id);
+    expect(JSON.stringify(first)).not.toContain(attemptId);
+    expect(journal.record).toHaveBeenCalledWith(attemptId, order.id, 'pending');
     await service.confirm(owner, consent(state), signal());
     expect(provider.dispatchSandbox).toHaveBeenCalledTimes(1);
   });
@@ -202,16 +208,54 @@ describe('once-only dispatch and truthful order status', () => {
     expect((await service.confirm(owner, consent(state), signal())).stage).toBe('unknown');
     expect((await service.confirm(owner, consent(state), signal())).stage).toBe('unknown');
     expect(provider.dispatchSandbox).toHaveBeenCalledTimes(1);
-    expect(journal.record).toHaveBeenCalledWith(state.id, null, 'unknown');
+    expect(journal.record).toHaveBeenCalledWith(journal.claim.mock.calls[0][0], null, 'unknown');
+  });
+  it.each(['expiry', 'restart'])('blocks another dispatch of an uncertain selection after checkout %s', async reason => {
+    const first = setup();
+    const attempts = new Set<string>();
+    first.journal.claim.mockImplementation(async id => {
+      if (attempts.has(id)) throw new ProviderError('DISPATCH_ALREADY_ATTEMPTED', 'Saved dispatch exists.');
+      attempts.add(id);
+    });
+    const state = await quoted(first.service);
+    first.provider.dispatchSandbox.mockRejectedValue(new ProviderError('AGNIC_TIMEOUT', 'The order outcome is uncertain.'));
+    await first.service.confirm(owner, consent(state), signal());
+
+    if (reason === 'expiry') vi.advanceTimersByTime(30 * 60000 + 1);
+    const next = reason === 'restart' ? setup(product, first.journal) : first;
+    const recreated = await quoted(next.service);
+    expect(recreated.id).not.toBe(state.id);
+    await expect(next.service.confirm(owner, consent(recreated), signal())).rejects.toMatchObject({ code: 'DISPATCH_ALREADY_ATTEMPTED' });
+    expect(first.journal.claim.mock.calls[1][0]).toBe(first.journal.claim.mock.calls[0][0]);
+    expect(first.provider.dispatchSandbox).toHaveBeenCalledTimes(1);
+    if (reason === 'restart') expect(next.provider.dispatchSandbox).not.toHaveBeenCalled();
+  });
+  it.each(['owner', 'merchant', 'sku'])('keeps a different sandbox %s in a separate dispatch identity', async field => {
+    const first = setup();
+    const state = await quoted(first.service);
+    await first.service.confirm(owner, consent(state), signal());
+
+    const next = setup(product, first.journal);
+    const nextOwner = field === 'owner' ? 'another-owner' : owner;
+    const nextMerchant = field === 'merchant' ? { ...merchant, id: 'another-merchant' } : merchant;
+    const nextProduct = { ...testProduct, merchantId: nextMerchant.id, sku: field === 'sku' ? 'another-sku' : testProduct.sku };
+    next.provider.getSandboxProducts.mockResolvedValue({ merchant: nextMerchant, products: [nextProduct] });
+    next.provider.getMerchant.mockResolvedValue(nextMerchant);
+    const selected = await next.service.beginSandbox(nextOwner, nextProduct.id, signal());
+    const reviewed = await next.service.quote(nextOwner, selected.id, signal());
+    await next.service.confirm(nextOwner, consent(reviewed), signal());
+    expect(first.journal.claim.mock.calls[1][0]).not.toBe(first.journal.claim.mock.calls[0][0]);
+    expect(next.provider.dispatchSandbox).toHaveBeenCalledTimes(1);
   });
   it('polls the saved order at a bounded interval without ever redispatching', async () => {
-    const { service, provider } = setup();
+    const { service, provider, journal } = setup();
     const state = await quoted(service);
     await service.confirm(owner, consent(state), signal());
     await service.refresh(owner, state.id, signal());
     await service.refresh(owner, state.id, signal());
     expect(provider.getOrder).toHaveBeenCalledTimes(1);
     expect(provider.getOrder).toHaveBeenCalledWith(order.id, expect.any(Object));
+    expect(journal.record).toHaveBeenLastCalledWith(journal.claim.mock.calls[0][0], order.id, 'pending');
     vi.advanceTimersByTime(5000);
     await service.refresh(owner, state.id, signal());
     expect(provider.getOrder).toHaveBeenCalledTimes(2);

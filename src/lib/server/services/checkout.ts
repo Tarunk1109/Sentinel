@@ -1,5 +1,5 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { CheckoutSession, Merchant, SandboxConsent, SandboxInfo } from '@/lib/domain/checkout';
 import type { ProductCandidate, ProductIntent, SafePreview } from '@/lib/domain/commerce';
 import type { CallContext, CheckoutProvider } from './live-contracts';
@@ -9,7 +9,12 @@ import { DispatchJournal } from '../dispatch-journal';
 
 const context = (signal: AbortSignal): CallContext => ({ signal, usage: { modelCalls: 0, agnicCalls: 0, inputTokens: 0, outputTokens: 0 } });
 type Selection = { product: ProductCandidate; intent: ProductIntent };
-type Entry = { owner: string; state: CheckoutSession; intent: ProductIntent; expires: number; exploreAttempted: boolean; exploreId: string | null; started: number; lastPoll: number; dispatched: boolean; fulfillmentId?: string };
+type Entry = { owner: string; state: CheckoutSession; intent: ProductIntent; expires: number; exploreAttempted: boolean; exploreId: string | null; started: number; lastPoll: number; dispatched: boolean; dispatchAttemptId: string | null; fulfillmentId?: string };
+function sandboxAttemptId(owner: string, merchantId: string, sku: string): string {
+  // Keep the durable claim stable across checkout expiry and process restarts, without exposing the owner.
+  const hash = createHash('sha256').update(JSON.stringify(['sandbox-dispatch-v1', owner, merchantId, sku])).digest('hex').slice(0, 32);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20)}`;
+}
 const setup = () => ({ testCardConfigured: Boolean(getTestCardAlias()), cardSetupUrl: 'https://app.agnic.ai/partner/cards/new', profileSetupUrl: 'https://app.agnic.ai', guideUrl: 'https://docs.agnic.ai/docs/agentic-commerce/testing' });
 const terminalMessages: Record<string, string> = {
   merchant_error: 'The merchant could not complete checkout. Review the existing order with Agnic; no second dispatch was sent.',
@@ -36,7 +41,7 @@ export class CheckoutService {
     for (const [id,e] of this.entries) if (e.expires < Date.now()) this.entries.delete(id);
     if (this.entries.size >= 80) throw new ProviderError('CHECKOUT_BUSY', 'Too many active checkout sessions. Finish an existing session first.', 429);
     const state: CheckoutSession = { id: randomUUID(), mode: sandbox ? 'SANDBOX_COMMERCE_MODE' : 'REAL_COMMERCE_MODE', product: selection.product, quantity: selection.intent.quantity, stage: 'selected', message: 'Review your selection. Merchant preparation and price checks do not purchase anything.', merchant: null, preview: null, quoteId: null, quoteExpiresAt: null, order: null, approvedAt: null, canConfirm: false, setup: setup() };
-    this.entries.set(state.id, { owner, state, intent: selection.intent, expires: Date.now() + 30 * 60_000, exploreAttempted: false, exploreId: null, started: 0, lastPoll: 0, dispatched: false }); return structuredClone(state);
+    this.entries.set(state.id, { owner, state, intent: selection.intent, expires: Date.now() + 30 * 60_000, exploreAttempted: false, exploreId: null, started: 0, lastPoll: 0, dispatched: false, dispatchAttemptId: null }); return structuredClone(state);
   }
   begin(owner: string, missionId: string, productId: string): CheckoutSession {
     const key = `${owner}:${missionId}:${productId}`;
@@ -140,7 +145,7 @@ export class CheckoutService {
       else if (order.status === 'succeeded' || order.status === 'unknown') { e.state.stage = 'unknown'; e.state.message = 'The provider did not supply a verified test success. Inspect the existing order; no receipt was fabricated.'; }
       else if (terminalMessages[order.status]) { e.state.stage = 'failed'; e.state.message = ['payment_declined', 'card_declined', 'test_card_declined'].includes(order.errorCode ?? '') ? 'The test payment was declined. Check the configured test card in Agnic; this order will not be dispatched again.' : terminalMessages[order.status]; }
       else if (order.status === 'approval_required') { e.state.stage = 'blocked'; e.state.message = 'Agnic requires hosted setup or approval. Inspect the existing order; do not dispatch again.'; }
-      await this.journal.record(id,order.id,order.status);
+      await this.journal.record(e.dispatchAttemptId!,order.id,order.status);
     });
   }
   async confirm(owner: string, input: SandboxConsent, signal: AbortSignal): Promise<CheckoutSession> {
@@ -155,14 +160,15 @@ export class CheckoutService {
       const fresh = await this.provider.previewOrder(e.state.product,e.intent,context(signal),e.fulfillmentId);
       if (!this.sameQuote(approved,fresh)) { e.state.preview = fresh; e.state.quoteId = null; e.state.quoteExpiresAt = null; e.state.canConfirm = false; e.state.stage = 'blocked'; e.state.message = 'Quote changed since review. Check the updated price and obtain a new confirmation.'; return; }
       const amount = fresh.amount!;
-      await this.journal.claim(e.state.id);
+      const attemptId = sandboxAttemptId(e.owner,merchant.id,e.state.product.sku);
+      await this.journal.claim(attemptId);
       // Mark once BEFORE any execution. Unknown outcomes may never be retried.
-      e.dispatched = true; e.state.canConfirm = false; e.state.stage = 'dispatching'; e.state.approvedAt = new Date().toISOString(); e.started = Date.now();
+      e.dispatchAttemptId = attemptId; e.dispatched = true; e.state.canConfirm = false; e.state.stage = 'dispatching'; e.state.approvedAt = new Date().toISOString(); e.started = Date.now();
       try {
         const order = await this.provider.dispatchSandbox({ merchantId: merchant.id, sku: e.state.product.sku, quantity: e.intent.quantity, amount, maxTotalMinor: Math.floor(e.intent.budget.maxAmount! * 100), fulfillmentId: e.fulfillmentId, approvedAt: e.state.approvedAt, confirmationText: input.confirmationText, originalRequest: e.intent.originalRequest },context(signal));
         e.state.order = order; e.state.stage = 'processing'; e.state.message = 'Test order dispatched once. Merchant checkout processing; only order status will be polled.';
-        await this.journal.record(e.state.id,order.id,order.status);
-      } catch (error) { e.state.stage = 'unknown'; e.state.message = publicError(error).message + ' This dispatch attempt is saved and cannot be repeated.'; await this.journal.record(e.state.id,e.state.order?.id ?? null,'unknown'); }
+        await this.journal.record(attemptId,order.id,order.status);
+      } catch (error) { e.state.stage = 'unknown'; e.state.message = publicError(error).message + ' This dispatch attempt is saved and cannot be repeated.'; await this.journal.record(attemptId,e.state.order?.id ?? null,'unknown'); }
     });
   }
   private sameQuote(a: SafePreview | null, b: SafePreview): boolean {

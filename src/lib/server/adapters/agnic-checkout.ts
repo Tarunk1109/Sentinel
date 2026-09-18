@@ -59,7 +59,9 @@ export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProv
     return merchant;
   }
   async getSandboxProducts(context: CallContext) {
-    const merchant = await this.getMerchant('merchant_untitled_fidget_shop', context);
+    // A replacement identity must come from Agnic, configured on the server.
+    // Configuration selects a merchant; it never overrides its test status.
+    const merchant = await this.getMerchant(process.env.SENTINEL_SANDBOX_MERCHANT_ID?.trim() || 'merchant_untitled_fidget_shop', context);
     if (!merchant.isTest) return { merchant, products: [] };
     assertSandboxMerchant(merchant);
     const intent: ProductIntent = { originalRequest: 'Official sandbox hex token fidget', searchQuery: 'hex token fidget', productType: 'fidget', quantity: 1, country: 'CA', budget: { maxAmount: 1, currency: 'CAD' }, requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };

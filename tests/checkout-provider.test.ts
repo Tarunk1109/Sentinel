@@ -26,6 +26,19 @@ function withDispatch() {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('merchant discovery and setup', () => {
+  it('accepts an organizer-provided server merchant ID but still blocks a non-test merchant', async () => {
+    vi.stubEnv('SENTINEL_SANDBOX_MERCHANT_ID', merchant.id);
+    const { provider, network } = setup({ ...merchant, is_test: false });
+    expect(await provider.getSandboxProducts(context())).toMatchObject({ merchant: { id: merchant.id, isTest: false }, products: [] });
+    expect(network).toHaveBeenCalledTimes(1);
+    expect(network.mock.calls[0][0]).toBe(`https://api.agnic.ai/api/autofill/merchants/${merchant.id}`);
+  });
+  it('rejects an invalid configured merchant ID before network access', async () => {
+    vi.stubEnv('SENTINEL_SANDBOX_MERCHANT_ID', '../dispatch');
+    const { provider, network } = setup(merchant);
+    await expect(provider.getSandboxProducts(context())).rejects.toMatchObject({ code: 'INVALID_MERCHANT' });
+    expect(network).not.toHaveBeenCalled();
+  });
   it('reads authoritative merchant metadata without exploring an onboarded merchant', async () => {
     const { provider, network } = setup(merchant);
     expect(await provider.getMerchant(merchant.id, context())).toEqual({ id: merchant.id, name: merchant.name, domain: merchant.domain, rail: 'shopify', isTest: true, currency: 'CAD' });
