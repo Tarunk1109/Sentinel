@@ -76,7 +76,7 @@ There is no real-commerce dispatch route. Frontend `is_test` or merchant/amount 
 
 `SANDBOX_COMMERCE_MODE` is separate. `assertSandboxMerchant()` requires Agnic's `is_test=true` and the Shopify rail; neither the domain name nor a frontend flag establishes test status. No raw card fields are collected. The account default card is never selected by this code.
 
-The service joins concurrent operations and disables confirmation before execution. Before dispatch it exclusively creates a durable attempt file under `.sentinel/sandbox-attempts/`, then records the returned order ID/status atomically. Failed or uncertain attempts remain claimed and must not be retried. This prevents a repeated dispatch for the same checkout ID, including after restart; it is not provider-wide idempotency across newly created sessions or other applications.
+The service joins concurrent operations and disables confirmation before execution. Before dispatch it exclusively creates a durable attempt file under `.sentinel/sandbox-attempts/`, then records the returned order ID/status atomically. Failed or uncertain attempts remain claimed and must not be retried. The private attempt key derives from the browser owner, verified merchant ID, and variant SKU. It blocks another dispatch of that selection after checkout expiry or server restart. This deliberately permits only one attempt per selection and browser owner in the demo. Clearing browser cookies or using another application is outside this local guard; it is not provider-wide idempotency.
 
 Mission, checkout, quote, and selection state is bounded and held in memory. A restart clears those sessions; the private AI ledger and dispatch journal survive. After a restart or ambiguous order outcome, inspect the saved order in Agnic rather than starting another checkout. Do not delete these safety files to bypass a block. This architecture assumes one local server process and a persistent filesystem; it is not designed for multi-instance or ephemeral deployment. No database, accounts, or public authentication infrastructure was added.
 
@@ -92,10 +92,16 @@ The unchanged **C$5 cap controls OpenAI inference only**. It never limited Agnic
 
 ## Manual Agnic setup
 
-1. Ask Agnic to designate the official test merchant as `is_test=true` in its merchant API, or provide the current official test merchant identity. The server must verify that metadata before any dispatch. Do not override the check locally.
+1. Ask Agnic to designate the official test merchant as `is_test=true` in its merchant API, or provide the current official test merchant identity. Set an organizer-provided ID in the server-only `SENTINEL_SANDBOX_MERCHANT_ID` setting. The server must verify its metadata before any dispatch. Do not override the test check locally.
 2. Use [Agnic's hosted card setup](https://app.agnic.ai/partner/cards/new) with its documented **test** payment method only. Store only the resulting alias in `SENTINEL_SANDBOX_CARD_ALIAS_ID` and set `SENTINEL_SANDBOX_CARD_CONFIRMED=true` after verifying it is a test card. Never put card numbers, expiry, or CVV in code, environment files, or SENTINEL input fields. If hosted test setup is unavailable, stop and ask Agnic.
 3. If fulfillment requires a delivery profile, complete the hosted profile flow in [Agnic](https://app.agnic.ai), following Agnic's test-data instructions. SENTINEL does not collect or log addresses. Ask Agnic for the required manual setup if no supported hosted test workflow is available.
 4. Restart after configuration changes, verify the sandbox merchant, obtain a fresh quote, then explicitly confirm in the TEST PURCHASE modal. Do not repeat an existing or uncertain order.
+
+## Free backend diagnostics
+
+Run `npm run check:agnic` to inspect the configured merchant and the returned list of designated test merchants. It prints only selected public metadata and setup booleans. It never runs OpenAI inference or dispatch, and never prints tokens, addresses, raw provider errors, or card aliases.
+
+`npm run check:agnic -- --explore` additionally makes **one read-only exploration** of the configured merchant. Use it deliberately, not as a polling loop; it never retries. On September 18 this returned HTTP 500 / `db_error`, while merchant metadata returned `is_test=false` and `catalog_error=merchant_not_linked`. See `AGNIC_SUPPORT_MESSAGE.md` for the organizer message.
 
 ## Validation and references
 
