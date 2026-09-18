@@ -142,7 +142,12 @@ export type InspectionStep = "CHOOSE_SUBJECT" | "ASK_USER_INTENT" | "ASK_CLARIFI
 export function resolveInspectionStep(analysis: InspectionAnalysis, selectedSubjectId: string | null): InspectionStep {
   if (analysis.outcome !== "ANALYZED") throw new Error("Cannot resolve a step for an inspection that did not complete.");
   if (analysis.primarySubjectAmbiguous && !selectedSubjectId) return "CHOOSE_SUBJECT";
-  if (AUTO_SEARCH_ACTIONS.has(analysis.recommendedAction.action)) return "READY_TO_SEARCH";
+  if (analysis.primarySubjectAmbiguous || (selectedSubjectId && selectedSubjectId !== analysis.primarySubjectId)) return "ASK_USER_INTENT";
+  if (AUTO_SEARCH_ACTIONS.has(analysis.recommendedAction.action)) {
+    if (analysis.condition.status === "INTACT") return "ASK_USER_INTENT";
+    if (analysis.condition.status === "UNCERTAIN" || !analysis.condition.visibleIssues.some(issue => issue.trim())) return "ASK_CLARIFICATION";
+    return "READY_TO_SEARCH";
+  }
   if (analysis.recommendedAction.action === "ASK_CLARIFICATION") return "ASK_CLARIFICATION";
   if (analysis.recommendedAction.action === "NO_ACTION") return "NO_ACTION";
   // ASK_USER_INTENT, or CHOOSE_SUBJECT already resolved by a selected subject above.
@@ -173,8 +178,8 @@ function adjustSearchQuery(action: UserIntentAction, baseQuery: string, category
  *
  * This is the enforced guard from Phase 4B: an object merely existing and looking intact is
  * never enough to build a search intent on its own. Building one here requires EITHER the
- * model's own visual evidence of a real problem (`recommendedAction` already one of the
- * SEARCH_* actions) OR the caller supplying an explicit `decision.userIntent` representing a
+ * model's own visual evidence of a real problem (a problem condition, visible issues and a
+ * SEARCH_* action) OR the caller supplying an explicit `decision.userIntent` representing a
  * real user choice (e.g. clicking "Find an upgrade"). That check happens in code, not only in
  * the model prompt, so a prompt regression cannot silently start recommending purchases again.
  */
@@ -197,30 +202,41 @@ export function buildProductIntentFromInspection(analysis: InspectionAnalysis, c
   const clarification = constraints.clarification?.trim();
   const userNote = decision.userIntent?.note?.trim();
   const extraRequirement = constraints.extraRequirement?.trim();
+  // A scene-level search target and its requirements cannot be attributed to a subject
+  // chosen after an ambiguous analysis, or applied as product features of an accessory.
+  const useAnalysisTarget = !analysis.primarySubjectAmbiguous && subject.id === analysis.primarySubjectId && effectiveAction !== "ACCESSORY";
+  const searchIntent = useAnalysisTarget ? analysis.searchIntent : {
+    searchQuery: subject.category,
+    productType: subject.category,
+    requiredFeatures: [],
+    preferredFeatures: [],
+    compatibilityRequirements: [],
+  };
+  const compatibility = useAnalysisTarget ? analysis.compatibilityRequirements : { verified: [], likely: [], unknown: [] };
 
-  let originalRequest = actionSentence[effectiveAction](subjectLabel, analysis.searchIntent.productType);
+  let originalRequest = actionSentence[effectiveAction](subjectLabel, searchIntent.productType);
   if (userNote) originalRequest += ` The user added: "${userNote}"`;
   if (clarification) originalRequest += ` Additional detail from the user: "${clarification}"`;
 
-  const unknownRequirements = analysis.compatibilityRequirements.unknown.map(item => cap(`${item} (not confirmed by the uploaded photo)`, 180));
+  const unknownRequirements = compatibility.unknown.map(item => cap(`${item} (not confirmed by the uploaded photo)`, 180));
   const compatibilityRequirements = dedupe([
     ...(userNote ? [cap(`User-provided detail: ${userNote}`, 180)] : []),
     ...(clarification ? [cap(`User-provided detail: ${clarification}`, 180)] : []),
-    ...analysis.searchIntent.compatibilityRequirements,
-    ...analysis.compatibilityRequirements.verified,
-    ...analysis.compatibilityRequirements.likely,
+    ...searchIntent.compatibilityRequirements,
+    ...compatibility.verified,
+    ...compatibility.likely,
     ...unknownRequirements,
   ]).slice(0, 12);
-  const preferredFeatures = dedupe([...analysis.searchIntent.preferredFeatures, ...(extraRequirement ? [extraRequirement] : [])]).slice(0, 12);
+  const preferredFeatures = dedupe([...searchIntent.preferredFeatures, ...(extraRequirement ? [extraRequirement] : [])]).slice(0, 12);
 
   return productIntentSchema.parse({
     originalRequest: cap(originalRequest, 1000),
-    searchQuery: cap(adjustSearchQuery(effectiveAction, analysis.searchIntent.searchQuery, subject.category), 180),
-    productType: cap(analysis.searchIntent.productType, 100),
+    searchQuery: cap(adjustSearchQuery(effectiveAction, searchIntent.searchQuery, subject.category), 180),
+    productType: cap(effectiveAction === "ACCESSORY" ? `${subject.category} accessory` : searchIntent.productType, 100),
     quantity: 1,
     budget: { maxAmount: constraints.budgetMaxAmount ?? null, currency: "CAD" },
     country: "CA",
-    requiredFeatures: dedupe(analysis.searchIntent.requiredFeatures).slice(0, 12),
+    requiredFeatures: dedupe(searchIntent.requiredFeatures).slice(0, 12),
     preferredFeatures,
     excludedFeatures: [],
     compatibilityRequirements,

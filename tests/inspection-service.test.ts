@@ -31,13 +31,22 @@ describe('InspectionService', () => {
     const result = await service.analyze(imageBase64, new AbortController().signal);
     expect(result.source).toBe('live');
   });
-  it('returns a clearly labelled DEVELOPMENT FIXTURE only when explicitly configured, and skips the paid call', async () => {
+  it.each(['development', 'test'])('returns a clearly labelled fixture only when explicitly configured in %s, and skips the paid call', async environment => {
+    vi.stubEnv('NODE_ENV', environment);
     vi.stubEnv('SENTINEL_INSPECT_FIXTURE', 'broken-office-chair-caster');
     const inspector: ImageInspector = { analyzeInspectionImage: vi.fn() };
     const service = new InspectionService(inspector);
     const result = await service.analyze(imageBase64, new AbortController().signal);
     expect(result.source).toBe('fixture');
     expect(result.analysis).toEqual(inspectionFixtures['broken-office-chair-caster']);
+    expect(inspector.analyzeInspectionImage).not.toHaveBeenCalled();
+  });
+  it('rejects a configured fixture in production without substituting a live call', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('SENTINEL_INSPECT_FIXTURE', 'broken-office-chair-caster');
+    const inspector: ImageInspector = { analyzeInspectionImage: vi.fn() };
+    const service = new InspectionService(inspector);
+    await expect(service.analyze(imageBase64, new AbortController().signal)).rejects.toMatchObject({ code: 'INSPECT_FIXTURE_DISABLED', status: 503 });
     expect(inspector.analyzeInspectionImage).not.toHaveBeenCalled();
   });
   it('rejects an unknown configured fixture name instead of silently falling back to live', async () => {

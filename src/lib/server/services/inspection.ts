@@ -12,6 +12,7 @@ export class InspectionService {
     const image = decodeAndValidateImage(imageBase64);
     const fixture = process.env.SENTINEL_INSPECT_FIXTURE?.trim();
     if (fixture) {
+      if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") throw new ProviderError("INSPECT_FIXTURE_DISABLED", "Inspection fixtures are only available in development or test environments.", 503);
       if (!isInspectionFixtureName(fixture)) throw new ProviderError("INSPECT_FIXTURE_UNKNOWN", "The configured development fixture name is unknown.", 503);
       return { analysis: structuredClone(inspectionFixtures[fixture]) as InspectionAnalysis, source: "fixture" };
     }

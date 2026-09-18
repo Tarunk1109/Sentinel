@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
-import { buildProductIntentFromInspection, inspectionAnalysisSchema, resolveInspectionStep } from '@/lib/domain/inspection';
+import { buildProductIntentFromInspection, inspectionAnalysisSchema, resolveInspectionStep, type InspectionAnalysis } from '@/lib/domain/inspection';
 import { inspectionFixtures } from '@/lib/server/demo/inspection-fixtures';
 
 const cableWithAdapter = inspectionFixtures['damaged-usb-cable-with-adapter'];
@@ -62,11 +62,19 @@ describe('Phase 4B regression: no automatic replacement for an intact object (re
   it('refuses to build a replacement ProductIntent automatically when nothing is wrong', () => {
     expect(() => buildProductIntentFromInspection(bottle)).toThrow(/explicit choice|problem/i);
   });
-  it('the guard is enforced in code, not only in the model prompt: it fires even if recommendedAction were mistakenly a SEARCH_* value would not be needed to trip it', () => {
-    // The gate keys off resolveInspectionStep, which is independent application logic -
-    // it is exercised directly here without any model call.
-    const step = resolveInspectionStep(bottle, bottle.primarySubjectId);
-    expect(['ASK_USER_INTENT', 'ASK_CLARIFICATION', 'NO_ACTION', 'CHOOSE_SUBJECT']).toContain(step);
+  it.each(['SEARCH_REPLACEMENT', 'SEARCH_PART', 'SEARCH_REFILL'] as const)('requires explicit intent when an intact item is mistakenly assigned %s', action => {
+    const conflicting: InspectionAnalysis = { ...bottle, recommendedAction: { action, reason: 'Contradictory model recommendation.' } };
+    expect(inspectionAnalysisSchema.safeParse(conflicting).success).toBe(true);
+    expect(resolveInspectionStep(conflicting, bottle.primarySubjectId)).toBe('ASK_USER_INTENT');
+    expect(() => buildProductIntentFromInspection(conflicting)).toThrow(/explicit choice|problem/i);
+    expect(buildProductIntentFromInspection(conflicting, {}, { userIntent: { action: 'FIND_SIMILAR' } }).originalRequest).toContain('Another');
+  });
+  it('requires clarification when a search recommendation lacks visible evidence or has uncertain condition', () => {
+    for (const condition of [{ ...singleCable.condition, visibleIssues: [] }, { ...singleCable.condition, status: 'UNCERTAIN' as const }]) {
+      const ungrounded: InspectionAnalysis = { ...singleCable, condition };
+      expect(resolveInspectionStep(ungrounded, singleCable.primarySubjectId)).toBe('ASK_CLARIFICATION');
+      expect(() => buildProductIntentFromInspection(ungrounded)).toThrow(/explicit choice|problem/i);
+    }
   });
   it('builds a valid "find similar" intent once the user explicitly asks for another one', () => {
     const intent = buildProductIntentFromInspection(bottle, {}, { userIntent: { action: 'FIND_SIMILAR' } });
@@ -80,6 +88,13 @@ describe('Phase 4B regression: no automatic replacement for an intact object (re
   it('builds an accessory-flavored intent once the user explicitly asks for an accessory', () => {
     const intent = buildProductIntentFromInspection(bottle, {}, { userIntent: { action: 'ACCESSORY' } });
     expect(intent.searchQuery.toLowerCase()).toContain('accessories');
+    expect(intent.productType).toBe('reusable water bottle accessory');
+  });
+  it('does not apply whole-item features as requirements for an accessory', () => {
+    const detailedBottle: InspectionAnalysis = { ...bottle, searchIntent: { ...bottle.searchIntent, requiredFeatures: ['400 ml capacity'], preferredFeatures: ['Orange cap'] } };
+    const intent = buildProductIntentFromInspection(detailedBottle, { extraRequirement: 'blue' }, { userIntent: { action: 'ACCESSORY' } });
+    expect(intent.requiredFeatures).toEqual([]);
+    expect(intent.preferredFeatures).toEqual(['blue']);
   });
   it('allows an explicit replacement request even though nothing looks damaged (Part 22)', () => {
     const intent = buildProductIntentFromInspection(bottle, {}, { userIntent: { action: 'REPLACE_ITEM', note: 'I want a bigger one' } });
@@ -101,6 +116,15 @@ describe('Phase 4B: ambiguous primary subject', () => {
     expect(() => buildProductIntentFromInspection(ambiguous, {}, { subjectId: 'lamp' })).toThrow(/explicit choice|problem/i);
     const intent = buildProductIntentFromInspection(ambiguous, {}, { subjectId: 'lamp', userIntent: { action: 'REPLACE_ITEM' } });
     expect(intent.originalRequest.toLowerCase()).toContain('lamp');
+    expect(intent.searchQuery).toBe('desk lamp');
+    expect(intent.productType).toBe('desk lamp');
+  });
+  it('grounds a user-selected subject without borrowing another subject’s requirements or condition', () => {
+    const intent = buildProductIntentFromInspection(cableWithAdapter, {}, { subjectId: 'adapter', userIntent: { action: 'FIND_SIMILAR' } });
+    expect(intent.searchQuery).toBe('wall charger');
+    expect(intent.productType).toBe('wall charger');
+    expect(intent.compatibilityRequirements).toEqual([]);
+    expect(() => buildProductIntentFromInspection(cableWithAdapter, {}, { subjectId: 'adapter' })).toThrow(/explicit choice|problem/i);
   });
   it('rejects a subject id that does not exist in this analysis', () => {
     expect(() => buildProductIntentFromInspection(ambiguous, {}, { subjectId: 'not-a-real-id', userIntent: { action: 'REPLACE_ITEM' } })).toThrow();
