@@ -95,6 +95,29 @@ The one live Build Mode test recommended in item 33 ran against a real photo: a 
 
 **Validation:** `npx vitest run` — 319 passed, 0 failed. `npm run lint` — zero warnings. `npx tsc --noEmit` — zero errors. `npm run build` — production build succeeded. Secret scan of every touched file against the real `.env.local` credential values — zero matches. Fixtures only; zero live model calls; zero Agnic calls; zero dispatch calls.
 
+## 32c. September 18, 2026: the retried live test hit a structured-output token limit, hardened at both the schema and prompt level
+
+A second live attempt (a realistic multi-object scene, presumably larger/more verbose than the fixtures) failed with `"The model did not complete its structured response within the token limit. No retry was made."` (`OPENAI_INCOMPLETE` in `structured()`, `openai.ts`) — a genuine truncation, not an image-upload or commerce problem.
+
+**Old Build output-token limit: 2200.** The schema itself had no realistic ceiling on worst-case size: up to 12 components, each with 4 evidence/requirement arrays of up to 8 items of up to 180 characters. A model producing a thorough (not even adversarial) analysis of a busy real scene could exceed 2200 output tokens well before hitting any of those schema maximums.
+
+**New Build output-token limit: 3600.** Chosen from the middle of the requested 2500–4000 range after sizing it against the *tightened* schema below, not raised arbitrarily. `product_intent` (Request Mode) stays 1000 and `inspection_analysis` (Inspect Mode) stays 1600 — both unchanged and now directly pinned by a new test, `analyzeInspectionImage`'s 1600 for the first time (`build-adapter.test.ts`).
+
+**What was simplified, in `src/lib/domain/build.ts` (`buildComponentSchema`/`buildAnalysisSchema`):**
+- `components`: max 12 → **max 8**, and `analyzeBuildScene`'s prompt (STEP 2, `openai.ts`) now explicitly caps at 8 and instructs prioritizing independently purchasable items, then important integrated features, then meaningful accessories - ignoring visually insignificant objects rather than enumerating them.
+- Per-component `visibleEvidence`/`inferredRequirements`/`compatibilityRequirements`/`unknowns`: max 8 items of 180 chars → **max 3 items of 120 chars** (new `componentEvidenceList`, separate from the unchanged analysis-level `shortList` used by `existingItems`/`missingInformation`, which don't multiply by component count and weren't implicated). STEP 3 of the prompt now explicitly asks for "a few words each, never a full sentence."
+- `name`: 120 → 80 chars; `category`/`brand`/`model`: 120 → 60 chars.
+- `dependencies`: max 20 → max 10; `relationship`: 220 → 160 chars.
+- `clarificationQuestions` was already max 3 - unchanged, now directly pinned by a new schema test.
+- The integrated-feature logic added in 32b (`componentKind`, `parentComponentId`, exclusion from plan items/budget/search, folding into the parent's `ProductIntent`) is untouched; the realistic-8-component regression test explicitly mixes all four `componentKind` values together with the new caps to prove nothing regressed.
+- No retry was added anywhere - an incomplete/truncated response still surfaces the same honest `OPENAI_INCOMPLETE` error it always did; a new test asserts the network is called exactly once when that happens.
+
+**New tests: 12** (319 → 331). 8 in `build-domain.test.ts` (realistic 8-component scene mixing every `componentKind`; reject/accept exactly at the 8-component, 3-item, and 3-clarification-question boundaries; reject a >120-char evidence item). 4 in `build-adapter.test.ts` (the new 3600 ceiling is actually requested; an incomplete response fails with the exact honest error; exactly one network call is made - no retry; raising Build's limit doesn't change Request's 1000 or Inspect's 1600 in the same reasoner instance).
+
+**Validation:** `npx vitest run` — 331 passed, 0 failed. `npm run lint` — zero warnings. `npx tsc --noEmit` — zero errors. `npm run build` — production build succeeded. Secret scan — zero matches. Fixtures/mocks only; zero live model calls; zero Agnic calls; zero dispatch calls.
+
+**Do I recommend retrying the same real image once? Yes.** The failure was a token ceiling, not a reasoning defect, and the fix directly targets it: a materially larger ceiling (3600 vs. 2200) plus a schema that now makes a same-size-or-worse output structurally impossible (8 components × 3 short items instead of 12 × 8 longer ones) plus a prompt that explicitly asks for brevity. If the same real image still fails after this, that would point at something other than raw output size (e.g. the scene has more than 8 materially relevant objects), which would be worth knowing.
+
 ## 33. Do I recommend one live Build Mode image test next?
 
 **Answered — see 32b.** One live test ran on September 18, 2026 and found the component-modeling bug described above, now fixed. The original recommendation and reasoning are kept below for the record.

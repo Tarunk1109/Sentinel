@@ -14,6 +14,17 @@ import { productIntentSchema, type Country, type Currency, type Price, type Prod
 const shortItem = z.string().min(1).max(180);
 const shortList = z.array(shortItem).max(8);
 
+/**
+ * Per-component evidence/requirement fields specifically (visibleEvidence,
+ * inferredRequirements, compatibilityRequirements, unknowns). These are the fields that
+ * multiply by component count, so they get a tighter cap than `shortList` above (used for
+ * the analysis-level existingItems/missingInformation, which don't multiply and weren't
+ * implicated in the token-limit failure this bounds). See PHASE5_REPORT.md for the
+ * output-token incident this was sized against.
+ */
+const componentEvidenceItem = z.string().min(1).max(120);
+const componentEvidenceList = z.array(componentEvidenceItem).max(3);
+
 /** Image-level failures only: can this photo be analyzed at all. */
 export const buildOutcomeSchema = z.enum(["ANALYZED", "NO_OBJECT_DETECTED", "IMAGE_TOO_BLURRY", "IMAGE_TOO_DARK", "UNSUPPORTED_IMAGE"]);
 export type BuildOutcome = z.infer<typeof buildOutcomeSchema>;
@@ -40,10 +51,10 @@ export type BuildComponentKind = z.infer<typeof buildComponentKindSchema>;
 
 export const buildComponentSchema = z.object({
   id: z.string().min(1).max(40),
-  name: z.string().min(1).max(120),
-  category: z.string().min(1).max(120),
-  brand: z.string().max(120).nullable(),
-  model: z.string().max(120).nullable(),
+  name: z.string().min(1).max(80),
+  category: z.string().min(1).max(60),
+  brand: z.string().max(60).nullable(),
+  model: z.string().max(60).nullable(),
   role: buildComponentRoleSchema,
   componentKind: buildComponentKindSchema,
   /** Non-null only for componentKind INTEGRATED_FEATURE; the id of the component this is
@@ -52,10 +63,10 @@ export const buildComponentSchema = z.object({
    * crash or a fabricated separate purchase) - see `integratedFeaturesOf`. */
   parentComponentId: z.string().min(1).max(40).nullable(),
   confidence: z.number().min(0).max(1),
-  visibleEvidence: shortList,
-  inferredRequirements: shortList,
-  compatibilityRequirements: shortList,
-  unknowns: shortList,
+  visibleEvidence: componentEvidenceList,
+  inferredRequirements: componentEvidenceList,
+  compatibilityRequirements: componentEvidenceList,
+  unknowns: componentEvidenceList,
   quantity: z.number().int().min(1).max(10),
 }).strict();
 export type BuildComponent = z.infer<typeof buildComponentSchema>;
@@ -64,7 +75,7 @@ export const buildDependencyImportanceSchema = z.enum(["REQUIRED", "RECOMMENDED"
 export const buildDependencySchema = z.object({
   sourceComponentId: z.string().min(1).max(40),
   targetComponentId: z.string().min(1).max(40),
-  relationship: z.string().min(1).max(220),
+  relationship: z.string().min(1).max(160),
   importance: buildDependencyImportanceSchema,
 }).strict();
 export type BuildDependency = z.infer<typeof buildDependencySchema>;
@@ -77,8 +88,12 @@ export const buildAnalysisSchema = z.object({
     description: z.string().min(1).max(400),
     confidence: z.number().min(0).max(1),
   }).strict(),
-  components: z.array(buildComponentSchema).min(1).max(12),
-  dependencies: z.array(buildDependencySchema).max(20),
+  /** Capped at 8, not the schema's old 12: only materially relevant components -
+   * independently purchasable items, important integrated features, and meaningful
+   * accessories - never every visually insignificant object. See STEP 2 in
+   * `analyzeBuildScene`'s instructions and PHASE5_REPORT.md for why. */
+  components: z.array(buildComponentSchema).min(1).max(8),
+  dependencies: z.array(buildDependencySchema).max(10),
   /** Component names the user's text already told us they own; matched case-insensitively
    * against `components[].name` when building the plan. Never guessed from the photo alone. */
   existingItems: shortList,

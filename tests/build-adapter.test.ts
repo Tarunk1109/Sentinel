@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 import { OpenAIReasoner } from '@/lib/server/adapters/openai';
-import { context } from './fixtures';
+import { context, intent } from './fixtures';
 import { buildAnalysisFixtures } from '@/lib/server/demo/build-fixtures';
+import { inspectionFixtures } from '@/lib/server/demo/inspection-fixtures';
 
 beforeEach(() => { vi.stubEnv('OPENAI_API_KEY', 'offline-test-key'); vi.stubEnv('SENTINEL_ALLOW_PAID_AI', 'true'); });
 afterEach(() => vi.unstubAllEnvs());
@@ -55,5 +56,44 @@ describe('bounded structured OpenAI build scene analysis', () => {
     const network = vi.fn<typeof fetch>();
     await expect(new OpenAIReasoner(network, budget()).analyzeBuildScene(image, {}, context())).rejects.toThrow('disabled');
     expect(network).not.toHaveBeenCalled();
+  });
+});
+
+// Hardening after a real live test failed with "The model did not complete its structured
+// response within the token limit. No retry was made." See PHASE5_REPORT.md.
+describe('build_analysis output-token limit: raised, bounded, and isolated from other modes', () => {
+  it('requests the new, larger Build-specific output-token ceiling for a realistic multi-component scene', async () => {
+    const network = vi.fn<typeof fetch>().mockResolvedValue(Response.json(result(scene)));
+    await new OpenAIReasoner(network, budget()).analyzeBuildScene(image, {}, context());
+    expect(JSON.parse(String(network.mock.calls[0][1]?.body)).max_output_tokens).toBe(3600);
+  });
+
+  it('fails safely with the exact honest error when the model returns an incomplete/truncated structured response', async () => {
+    const network = vi.fn<typeof fetch>().mockResolvedValue(Response.json(result(scene, 'incomplete')));
+    await expect(new OpenAIReasoner(network, budget()).analyzeBuildScene(image, {}, context()))
+      .rejects.toMatchObject({ code: 'OPENAI_INCOMPLETE', message: expect.stringContaining('did not complete its structured response within the token limit') });
+  });
+
+  it('never automatically retries after an incomplete/truncated response - exactly one network call is made', async () => {
+    const network = vi.fn<typeof fetch>().mockResolvedValue(Response.json(result(scene, 'incomplete')));
+    await expect(new OpenAIReasoner(network, budget()).analyzeBuildScene(image, {}, context())).rejects.toThrow();
+    expect(network).toHaveBeenCalledTimes(1);
+  });
+
+  it('raising Build Mode\'s output-token limit does not change Request Mode\'s or Inspect Mode\'s own limits', async () => {
+    const network = vi.fn<typeof fetch>();
+    const reasoner = new OpenAIReasoner(network, budget());
+
+    network.mockResolvedValueOnce(Response.json(result(intent)));
+    await reasoner.understand('a mechanical keyboard under 100 CAD', context());
+    expect(JSON.parse(String(network.mock.calls[0][1]?.body)).max_output_tokens).toBe(1000);
+
+    network.mockResolvedValueOnce(Response.json(result(inspectionFixtures['broken-office-chair-caster'])));
+    await reasoner.analyzeInspectionImage(image, context());
+    expect(JSON.parse(String(network.mock.calls[1][1]?.body)).max_output_tokens).toBe(1600);
+
+    network.mockResolvedValueOnce(Response.json(result(scene)));
+    await reasoner.analyzeBuildScene(image, {}, context());
+    expect(JSON.parse(String(network.mock.calls[2][1]?.body)).max_output_tokens).toBe(3600);
   });
 });

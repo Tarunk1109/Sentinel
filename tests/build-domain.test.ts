@@ -245,3 +245,65 @@ describe('componentKind: integrated features are never a separate purchasable co
     expect(plan.dependencies).toHaveLength(0);
   });
 });
+
+// Hardening after a real live test failed with "The model did not complete its structured
+// response within the token limit." The schema itself now bounds worst-case output size
+// (8 components, 3 evidence items per field, 120-char items) instead of relying on the
+// model choosing to be concise. See PHASE5_REPORT.md.
+describe('output-size bounds: components, evidence lists, and clarification questions', () => {
+  it('accepts a realistic 8-component scene mixing every componentKind, and builds a correct plan from it', () => {
+    const components: BuildComponent[] = [
+      comp('desk', { name: 'Compact desk', category: 'desk', role: 'ESSENTIAL', visibleEvidence: ['Wooden desk surface', 'Cable grommet at the back'] }),
+      comp('monitor', { name: 'Monitor', category: 'external monitor', role: 'ESSENTIAL', unknowns: ['Screen size', 'VESA pattern'] }),
+      comp('keyboard', { name: 'Keyboard', category: 'keyboard', role: 'ESSENTIAL' }),
+      comp('mouse', { name: 'Mouse', category: 'mouse', role: 'ESSENTIAL' }),
+      comp('chair', { name: 'Office chair', category: 'office chair', role: 'ESSENTIAL' }),
+      comp('monitor-arm', { name: 'Monitor arm', category: 'monitor arm', role: 'RECOMMENDED', componentKind: 'ACCESSORY', compatibilityRequirements: ['Monitor VESA pattern and weight'] }),
+      comp('keyboard-tray', { name: 'Keyboard tray', category: 'keyboard tray', role: 'RECOMMENDED', componentKind: 'INTEGRATED_FEATURE', parentComponentId: 'desk', inferredRequirements: ['Must slide freely'] }),
+      comp('plant', { name: 'Small plant', category: 'plant', role: 'DECORATIVE', componentKind: 'DECORATIVE' }),
+    ];
+    expect(components).toHaveLength(8);
+    const analysis = analysisWith(components);
+    expect(buildAnalysisSchema.safeParse(analysis).success).toBe(true);
+    const plan = createBuildPlan(analysis, { budgetMaxAmount: 1000 });
+    // 7 purchasable plan items: the 8th component (keyboard-tray) is an integrated
+    // feature, excluded entirely.
+    expect(plan.items).toHaveLength(7);
+    expect(plan.items.some(i => i.componentId === 'keyboard-tray')).toBe(false);
+  });
+
+  it('rejects more than 8 components in a single analysis', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => comp(`c${i}`, { name: `Component ${i}`, category: 'item', role: 'OPTIONAL' }));
+    expect(buildAnalysisSchema.safeParse(analysisWith(nine)).success).toBe(false);
+  });
+
+  it('accepts exactly 8 components (the boundary)', () => {
+    const eight = Array.from({ length: 8 }, (_, i) => comp(`c${i}`, { name: `Component ${i}`, category: 'item', role: 'OPTIONAL' }));
+    expect(buildAnalysisSchema.safeParse(analysisWith(eight)).success).toBe(true);
+  });
+
+  it('rejects more than 3 items in a per-component evidence/requirement field', () => {
+    const tooMany = comp('desk', { name: 'Desk', category: 'desk', role: 'ESSENTIAL', visibleEvidence: ['a', 'b', 'c', 'd'] });
+    expect(buildAnalysisSchema.safeParse(analysisWith([tooMany])).success).toBe(false);
+  });
+
+  it('accepts exactly 3 items in a per-component evidence field (the boundary)', () => {
+    const threeItems = comp('desk', { name: 'Desk', category: 'desk', role: 'ESSENTIAL', visibleEvidence: ['a', 'b', 'c'] });
+    expect(buildAnalysisSchema.safeParse(analysisWith([threeItems])).success).toBe(true);
+  });
+
+  it('rejects a per-component evidence item longer than 120 characters, keeping items concise rather than sentences', () => {
+    const longItem = comp('desk', { name: 'Desk', category: 'desk', role: 'ESSENTIAL', unknowns: ['x'.repeat(121)] });
+    expect(buildAnalysisSchema.safeParse(analysisWith([longItem])).success).toBe(false);
+  });
+
+  it('rejects more than 3 clarificationQuestions', () => {
+    const analysis: BuildAnalysis = { ...analysisWith([comp('desk', { name: 'Desk', category: 'desk', role: 'ESSENTIAL' })]), needsClarification: true, clarificationQuestions: ['a?', 'b?', 'c?', 'd?'] };
+    expect(buildAnalysisSchema.safeParse(analysis).success).toBe(false);
+  });
+
+  it('accepts exactly 3 clarificationQuestions (the boundary)', () => {
+    const analysis: BuildAnalysis = { ...analysisWith([comp('desk', { name: 'Desk', category: 'desk', role: 'ESSENTIAL' })]), needsClarification: true, clarificationQuestions: ['a?', 'b?', 'c?'] };
+    expect(buildAnalysisSchema.safeParse(analysis).success).toBe(true);
+  });
+});
