@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
-import { buildAnalysisSchema, buildProductIntentFromComponent, calculateBuildTotal, createBuildPlan, evaluateBuildDependencies, type BuildAnalysis, type BuildComponent, type BuildComponentResult } from '@/lib/domain/build';
+import { broadenSearchQuery, buildAnalysisSchema, buildProductIntentFromComponent, calculateBuildTotal, createBuildPlan, evaluateBuildDependencies, selectBuildPick, type BuildAnalysis, type BuildComponent, type BuildComponentResult } from '@/lib/domain/build';
 import { buildAnalysisFixtures } from '@/lib/server/demo/build-fixtures';
+import type { CompatibilityStatus } from '@/lib/domain/commerce';
 
 const gaming: BuildAnalysis = buildAnalysisFixtures['gaming-desk-setup'];
 const deskWithStorage: BuildAnalysis = buildAnalysisFixtures['desk-with-integrated-storage'];
 
-function product(id: string, amountMinor: number, description = ''): BuildComponentResult['products'][number] {
-  return { id, sku: `sku-${id}`, productGid: null, name: id, brand: null, description, merchantName: 'Test', merchantId: null, merchantUrl: null, productUrl: null, imageUrl: null, price: { amountMinor, currency: 'CAD' }, availability: 'available', country: 'CA', onboardRequired: false, metadata: {}, compatibility: { status: 'NEEDS_VERIFICATION', reasons: [], missingInformation: [] }, requiredConstraintsSatisfied: null, score: 0, recommendation: '' };
+function product(id: string, amountMinor: number, description = '', status: CompatibilityStatus = 'NEEDS_VERIFICATION'): BuildComponentResult['products'][number] {
+  return { id, sku: `sku-${id}`, productGid: null, name: id, brand: null, description, merchantName: 'Test', merchantId: null, merchantUrl: null, productUrl: null, imageUrl: null, price: { amountMinor, currency: 'CAD' }, availability: 'available', country: 'CA', onboardRequired: false, metadata: {}, compatibility: { status, reasons: [], missingInformation: [] }, requiredConstraintsSatisfied: status === 'INCOMPATIBLE' ? false : null, score: 0, recommendation: '' };
 }
 function comp(id: string, overrides: Partial<BuildComponent> & Pick<BuildComponent, 'name' | 'category' | 'role'>): BuildComponent {
   return { id, brand: null, model: null, confidence: 0.75, visibleEvidence: [], inferredRequirements: [], compatibilityRequirements: [], unknowns: [], quantity: 1, componentKind: 'PURCHASABLE', parentComponentId: null, ...overrides };
@@ -35,14 +36,14 @@ describe('createBuildPlan', () => {
   });
   it('never allocates a budget when none was given', () => {
     const plan = createBuildPlan(gaming, {});
-    expect(plan.items.every(i => i.budgetAllocation === null)).toBe(true);
+    expect(plan.items.every(i => i.targetAllocation === null)).toBe(true);
   });
   it('allocates a budget by weighted functional priority, never equally, and never exceeds the total', () => {
     const plan = createBuildPlan(gaming, { budgetMaxAmount: 800 }, ['desk', 'monitor', 'keyboard', 'mouse', 'monitor-arm']);
     const desk = plan.items.find(i => i.componentId === 'desk')!;
     const arm = plan.items.find(i => i.componentId === 'monitor-arm')!;
-    expect(desk.budgetAllocation!.amountMinor).toBeGreaterThan(arm.budgetAllocation!.amountMinor); // ESSENTIAL outweighs RECOMMENDED
-    const sum = plan.items.reduce((total, i) => total + (i.budgetAllocation?.amountMinor ?? 0), 0);
+    expect(desk.targetAllocation!.amountMinor).toBeGreaterThan(arm.targetAllocation!.amountMinor); // ESSENTIAL outweighs RECOMMENDED
+    const sum = plan.items.reduce((total, i) => total + (i.targetAllocation?.amountMinor ?? 0), 0);
     expect(sum).toBeLessThanOrEqual(80000);
   });
   it('does not silently increase the budget when re-run with a larger selection', () => {
@@ -54,14 +55,14 @@ describe('createBuildPlan', () => {
     const owns: BuildAnalysis = { ...gaming, existingItems: ['Monitor'] };
     const plan = createBuildPlan(owns, { budgetMaxAmount: 800 }, ['desk', 'monitor', 'monitor-arm']);
     const monitor = plan.items.find(i => i.componentId === 'monitor')!;
-    expect(monitor.owned).toBe(true); expect(monitor.included).toBe(false); expect(monitor.budgetAllocation).toBeNull(); expect(monitor.intent).toBeNull();
+    expect(monitor.owned).toBe(true); expect(monitor.included).toBe(false); expect(monitor.targetAllocation).toBeNull(); expect(monitor.intent).toBeNull();
     expect(plan.dependencies.some(d => d.targetComponentId === 'monitor')).toBe(true);
   });
   it('changing the selection invalidates the previous allocation for dropped/added items', () => {
     const before = createBuildPlan(gaming, { budgetMaxAmount: 800 }, ['desk', 'monitor']);
     const after = createBuildPlan(gaming, { budgetMaxAmount: 800 }, ['desk', 'monitor', 'keyboard', 'mouse']);
-    expect(before.items.find(i => i.componentId === 'desk')!.budgetAllocation!.amountMinor)
-      .not.toBe(after.items.find(i => i.componentId === 'desk')!.budgetAllocation!.amountMinor);
+    expect(before.items.find(i => i.componentId === 'desk')!.targetAllocation!.amountMinor)
+      .not.toBe(after.items.find(i => i.componentId === 'desk')!.targetAllocation!.amountMinor);
   });
   it('refuses to build a plan from an analysis that did not complete', () => {
     expect(() => createBuildPlan({ ...gaming, outcome: 'IMAGE_TOO_BLURRY' }, {})).toThrow();
@@ -71,23 +72,23 @@ describe('createBuildPlan', () => {
 describe('buildProductIntentFromComponent', () => {
   it('produces a Request-Mode-compatible ProductIntent defaulting CA/CAD', () => {
     const monitor = gaming.components.find(c => c.id === 'monitor')!;
-    const intent = buildProductIntentFromComponent(monitor, {}, null);
+    const intent = buildProductIntentFromComponent(monitor, {});
     expect(intent.country).toBe('CA'); expect(intent.budget).toEqual({ maxAmount: null, currency: 'CAD' });
     expect(intent.searchQuery).toBe('external monitor'); expect(intent.quantity).toBe(1);
   });
   it('carries unknown compatibility facts forward as caveats, never inventing exact values', () => {
     const arm = gaming.components.find(c => c.id === 'monitor-arm')!;
-    const intent = buildProductIntentFromComponent(arm, {}, null);
+    const intent = buildProductIntentFromComponent(arm, {});
     for (const unknown of arm.unknowns) expect(intent.compatibilityRequirements.some(r => r.includes(unknown) && r.includes('not confirmed'))).toBe(true);
   });
   it('never invents a brand: brandPreferences stays empty when none was visible', () => {
     const desk = gaming.components.find(c => c.id === 'desk')!;
-    expect(buildProductIntentFromComponent(desk, {}, null).brandPreferences).toEqual([]);
+    expect(buildProductIntentFromComponent(desk, {}).brandPreferences).toEqual([]);
   });
-  it('turns a budget allocation into the intent’s own budget', () => {
+  it('uses the user\'s overall stated build budget for the intent - never the component\'s own weighted target allocation, which would silently zero-out real search results priced only slightly above an internal planning split', () => {
     const desk = gaming.components.find(c => c.id === 'desk')!;
-    const intent = buildProductIntentFromComponent(desk, {}, { amountMinor: 18000, currency: 'CAD' });
-    expect(intent.budget.maxAmount).toBe(180);
+    const intent = buildProductIntentFromComponent(desk, { budgetMaxAmount: 800 });
+    expect(intent.budget.maxAmount).toBe(800);
   });
 });
 
@@ -305,5 +306,100 @@ describe('output-size bounds: components, evidence lists, and clarification ques
   it('accepts exactly 3 clarificationQuestions (the boundary)', () => {
     const analysis: BuildAnalysis = { ...analysisWith([comp('desk', { name: 'Desk', category: 'desk', role: 'ESSENTIAL' })]), needsClarification: true, clarificationQuestions: ['a?', 'b?', 'c?'] };
     expect(buildAnalysisSchema.safeParse(analysis).success).toBe(true);
+  });
+});
+
+// Hardening after a real live search returned zero desk matches: the component's own
+// weighted budget split was being used as a hard search-time price filter. See
+// PHASE5_REPORT.md.
+describe('broadenSearchQuery: deterministic, non-AI query broadening for a zero-result search', () => {
+  it('test #5: is a plain synchronous string function - no AI/model call is possible in its implementation', () => {
+    const result = broadenSearchQuery('black office desk');
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result).toBe('office desk');
+  });
+  it('strips low-priority visual/style modifiers left to right, matching the required examples exactly', () => {
+    expect(broadenSearchQuery('minimal black office desk')).toBe('office desk');
+    expect(broadenSearchQuery('white wireless mechanical keyboard')).toBe('mechanical keyboard');
+  });
+  it('never broadens so far that the product category changes or disappears', () => {
+    expect(broadenSearchQuery('desk')).toBeNull(); // a single word - nothing left to strip
+    expect(broadenSearchQuery('office desk')).toBeNull(); // no recognized style/color modifier present
+    expect(broadenSearchQuery('   ')).toBeNull();
+  });
+});
+
+describe('selectBuildPick: SENTINEL PICK only when genuinely defensible; target is a preference, never a search-time filter', () => {
+  it('returns NONE for an empty candidate list', () => {
+    expect(selectBuildPick([], null)).toEqual({ product: null, label: 'NONE', aboveTarget: null });
+  });
+  it('test #7: prefers a within-target candidate over a pricier one when both share the same compatibility tier', () => {
+    const top = product('top', 19999, '', 'LIKELY_COMPATIBLE');
+    const withinTarget = product('cheaper', 15900, '', 'LIKELY_COMPATIBLE');
+    const pick = selectBuildPick([top, withinTarget], { amountMinor: 16000, currency: 'CAD' });
+    expect(pick.product?.id).toBe('cheaper');
+    expect(pick.aboveTarget).toBeNull();
+  });
+  it('test #8: keeps the top-ranked candidate and shows an explicit "above target" amount when no comparably-verified within-target alternative exists', () => {
+    const top = product('top', 19999, '', 'VERIFIED');
+    const weakerButCheaper = product('weaker', 9900, '', 'NEEDS_VERIFICATION');
+    const pick = selectBuildPick([top, weakerButCheaper], { amountMinor: 16000, currency: 'CAD' });
+    expect(pick.product?.id).toBe('top');
+    expect(pick.aboveTarget).toEqual({ amountMinor: 3999, currency: 'CAD' });
+    expect(pick.label).toBe('TOP_MATCH'); // rule B: never silently SENTINEL_PICK when above target
+  });
+  it('test #11: SENTINEL PICK requires real compatibility evidence (VERIFIED or LIKELY_COMPATIBLE) - weak evidence gets TOP MATCH instead, even within target and even with no target set at all', () => {
+    const weak = product('a', 10000, '', 'NEEDS_VERIFICATION');
+    expect(selectBuildPick([weak], null).label).toBe('TOP_MATCH');
+    const verified = product('b', 10000, '', 'VERIFIED');
+    expect(selectBuildPick([verified], null).label).toBe('SENTINEL_PICK');
+  });
+  it('test #11 (unconditional rule): NEEDS_VERIFICATION never earns SENTINEL_PICK just because the component has no explicit compatibilityRequirements - real evidence is required regardless of component type', () => {
+    // A "plain" component (e.g. a desk) still gets evaluate()'d by the shared pipeline
+    // and can still land on NEEDS_VERIFICATION; this must not be quietly exempted, since
+    // some of that same evaluation's caveats (like a user's room dimensions) could never
+    // be resolved by any real listing regardless of component type.
+    const plainDeskCandidate = product('desk', 10000, '', 'NEEDS_VERIFICATION');
+    expect(selectBuildPick([plainDeskCandidate], null).label).toBe('TOP_MATCH');
+  });
+});
+
+describe('component target allocation: a planning target, never a hard search-time cap', () => {
+  it('test #6: intent.budget.maxAmount reflects the user\'s overall stated build budget, never this component\'s own weighted target allocation', () => {
+    const plan = createBuildPlan(gaming, { budgetMaxAmount: 800 }, ['desk', 'monitor', 'keyboard', 'mouse', 'monitor-arm']);
+    const desk = plan.items.find(i => i.componentId === 'desk')!;
+    expect(desk.targetAllocation!.amountMinor).toBeLessThan(80000); // desk's own weighted slice is well under the full $800
+    expect(desk.intent!.budget.maxAmount).toBe(800); // but the search itself is never narrowed to that slice
+  });
+});
+
+describe('build budget rebalancing: underspend can offset overspend; only the running total is a hard constraint', () => {
+  it('test #9: underspend on one component offsets overspend on another - neither is individually enforced', () => {
+    const plan = createBuildPlan(gaming, { budgetMaxAmount: 320 }, ['monitor', 'keyboard']); // ~$160 target each
+    const results: Record<string, BuildComponentResult> = {
+      monitor: { componentId: 'monitor', source: 'agnic', mission: null, error: null, products: [product('m1', 19999)] }, // above its own ~$160 target
+      keyboard: { componentId: 'keyboard', source: 'agnic', mission: null, error: null, products: [product('k1', 7568)] }, // well below its own ~$160 target
+    };
+    const total = calculateBuildTotal(plan, results);
+    expect(total.overBudget).toBe(false); // 199.99 + 75.68 = 275.67, under the $320 total
+    expect(total.subtotal!.amountMinor).toBe(19999 + 7568);
+  });
+  it('test #10: the total build budget cannot be silently exceeded - BUILD OVER BUDGET is flagged with the exact overage', () => {
+    const plan = createBuildPlan(gaming, { budgetMaxAmount: 300 }, ['monitor', 'keyboard']);
+    const results: Record<string, BuildComponentResult> = {
+      monitor: { componentId: 'monitor', source: 'agnic', mission: null, error: null, products: [product('m1', 19999)] },
+      keyboard: { componentId: 'keyboard', source: 'agnic', mission: null, error: null, products: [product('k1', 12900)] },
+    };
+    const total = calculateBuildTotal(plan, results);
+    expect(total.overBudget).toBe(true);
+    expect(total.overBy).toEqual({ amountMinor: 19999 + 12900 - 30000, currency: 'CAD' });
+  });
+  it('calculateBuildTotal sums whatever selectBuildPick actually recommends, not blindly the top-ranked candidate', () => {
+    const plan = createBuildPlan(gaming, { budgetMaxAmount: 160 }, ['monitor']);
+    const top = product('top', 19999, '', 'LIKELY_COMPATIBLE');
+    const withinTarget = product('cheaper', 15900, '', 'LIKELY_COMPATIBLE');
+    const results: Record<string, BuildComponentResult> = { monitor: { componentId: 'monitor', source: 'agnic', mission: null, error: null, products: [top, withinTarget] } };
+    const total = calculateBuildTotal(plan, results);
+    expect(total.subtotal).toEqual({ amountMinor: 15900, currency: 'CAD' });
   });
 });

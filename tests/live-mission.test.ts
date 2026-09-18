@@ -29,6 +29,12 @@ describe('live mission orchestration with offline fixtures', () => {
     const { service, reasoner } = setup(); reasoner.understand.mockResolvedValue({ ...intent, budget: { maxAmount: 1, currency: 'CAD' } });
     const mission = await service.run('gaming laptop under $1', 'owner', context().signal); expect(mission.products).toEqual([]); expect(mission.intent.budget.maxAmount).toBe(1); expect(reasoner.evaluate).not.toHaveBeenCalled();
   });
+  it('test #12 regression guard: runFromIntent (used by Build/Inspect) makes exactly one discovery call even on zero results - no query-broadening lives in the shared service, only in BuildService, layered on top', async () => {
+    const { service, commerce } = setup(); commerce.searchProducts.mockResolvedValue([]);
+    const mission = await service.runFromIntent(intent, 'owner', context().signal);
+    expect(mission.products).toEqual([]); expect(mission.status).toBe('no-results');
+    expect(commerce.searchProducts).toHaveBeenCalledTimes(1);
+  });
   it('requires session-owned server selection for quotes', async () => {
     const { service, commerce } = setup(); const mission = await service.run('monitor', 'owner', context().signal);
     await expect(service.preview('attacker', mission.id, product.id, context().signal)).rejects.toThrow('expired');

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowRight, Check, LoaderCircle, Package, ShieldQuestion, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { calculateBuildTotal, evaluateBuildDependencies, type BuildComponentRole, type BuildOutcome, type BuildComponentResult } from "@/lib/domain/build";
+import { calculateBuildTotal, evaluateBuildDependencies, selectBuildPick, type BuildComponentRole, type BuildOutcome, type BuildComponentResult } from "@/lib/domain/build";
 import type { BuildSessionView } from "@/lib/server/services/build";
 import { displayPrice } from "./commerce-display";
 
@@ -67,7 +67,8 @@ export function BuildResults({ session, source, selectedIds, onToggle, onSearch,
                   <span>{component.name}{component.quantity > 1 ? ` × ${component.quantity}` : ""}</span>
                 </label>
                 {component.unknowns.length > 0 && <span className="build-unknown-badge"><ShieldQuestion size={11} />{component.unknowns.length} to verify</span>}
-                {item.budgetAllocation && <span className="build-allocation">{displayPrice(item.budgetAllocation)} allocated</span>}
+                {/* A planning target, not a hard per-component cap - see selectBuildPick. */}
+                {item.targetAllocation && <span className="build-allocation">Target: {displayPrice(item.targetAllocation)}</span>}
               </li>;
             })}
           </ul>
@@ -99,16 +100,20 @@ export function BuildResults({ session, source, selectedIds, onToggle, onSearch,
         {plan.items.filter(item => item.included && !item.owned).map(item => {
           const result = results[item.componentId];
           const searching = searchingIds.has(item.componentId);
+          const pick = result ? selectBuildPick(result.products, item.targetAllocation) : null;
           return <div key={item.componentId} className="build-component-results">
-            <p className="inspect-field-label">{item.name.toUpperCase()}</p>
+            <p className="inspect-field-label">{item.name.toUpperCase()}{item.targetAllocation && <span className="build-target-note"> · Target: {displayPrice(item.targetAllocation)}</span>}</p>
             {searching && <p className="build-searching-note"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" />Searching…</p>}
             {result?.error && <p className="error-message" role="alert">{result.error}</p>}
-            {result && !result.error && result.products.length === 0 && <p className="inspect-honesty-note">No matches found for this component.</p>}
+            {result && !result.error && result.broadenedTo && <p className="inspect-honesty-note">No exact {item.name.toLowerCase()} matches found. Broadened search to “{result.broadenedTo}”.</p>}
+            {result && !result.error && result.products.length === 0 && <p className="inspect-honesty-note">No suitable products found.</p>}
             {result && !result.error && result.products.length > 0 && <div className="build-product-options">
-              {result.products.slice(0, 3).map((product, index) => <div key={product.id} className="build-product-option">
-                {index === 0 && <span className="recommendation"><Sparkles size={11} />SENTINEL PICK</span>}
+              {result.products.slice(0, 3).map(product => <div key={product.id} className="build-product-option">
+                {pick?.product?.id === product.id && pick.label === "SENTINEL_PICK" && <span className="recommendation"><Sparkles size={11} />SENTINEL PICK</span>}
+                {pick?.product?.id === product.id && pick.label === "TOP_MATCH" && <span className="recommendation top-match">TOP MATCH</span>}
                 <p className="build-product-name">{product.name}</p>
                 <p className="build-product-price">{displayPrice(product.price)}</p>
+                {pick?.product?.id === product.id && pick.aboveTarget && <p className="build-above-target">Above target by {displayPrice(pick.aboveTarget)}</p>}
                 <p className="build-product-merchant">{product.merchantName}</p>
               </div>)}
             </div>}
@@ -121,7 +126,13 @@ export function BuildResults({ session, source, selectedIds, onToggle, onSearch,
           <span>Browse total{total.subtotal ? "" : " (incomplete)"}</span>
           <strong>{total.subtotal ? displayPrice(total.subtotal) : "Pending remaining searches"}</strong>
         </div>
-        {total.overBudget && <p className="error-message" role="alert">Your requested setup may exceed {plan.budget.maxAmount != null ? `C$${plan.budget.maxAmount}` : "your budget"}. Consider removing optional components or choosing a lower-cost option above.</p>}
+        {total.overBudget && total.subtotal && <div className="error-message build-over-budget" role="alert">
+          <p className="build-over-budget-heading">BUILD OVER BUDGET</p>
+          <p>Budget: {plan.budget.maxAmount != null ? `C$${plan.budget.maxAmount}` : "not set"}</p>
+          <p>Selected browse total: {displayPrice(total.subtotal)}</p>
+          {total.overBy && <p>Over by: {displayPrice(total.overBy)}</p>}
+          <p>Change your selections, choose lower-cost options above, or raise your budget before proceeding.</p>
+        </div>}
         {plan.warnings.map(warning => <p key={warning} className="inspect-honesty-note">{warning}</p>)}
       </>}
       {searchError && <p className="error-message" role="alert">{searchError}</p>}

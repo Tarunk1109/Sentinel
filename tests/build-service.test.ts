@@ -3,6 +3,7 @@ vi.mock('server-only', () => ({}));
 import { BuildService } from '@/lib/server/services/build';
 import { BuildSessionSigner } from '@/lib/server/build-session-token';
 import { buildAnalysisFixtures } from '@/lib/server/demo/build-fixtures';
+import type { BuildAnalysis } from '@/lib/domain/build';
 import type { SceneAnalyzer } from '@/lib/server/services/live-contracts';
 import type { RequestMissionService } from '@/lib/server/services/request-mission';
 import { product } from './fixtures';
@@ -14,6 +15,22 @@ function signal() { return new AbortController().signal; }
 function mockMission(overrides: Partial<Parameters<RequestMissionService['runFromIntent']>[0]> = {}) {
   return vi.fn(async (intent) => ({ id: 'mission-1', prompt: intent.originalRequest, intent, products: [product], steps: [], source: 'agnic' as const, status: 'ready' as const, summary: '', warnings: [], createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(), cacheHit: false, usage: { modelCalls: 0, agnicCalls: 1, inputTokens: 0, outputTokens: 0 }, counts: { discovered: 1, withinBudget: 1, shortlisted: 1 }, ...overrides }));
 }
+function missionWith(products: typeof product[]): Awaited<ReturnType<RequestMissionService['runFromIntent']>> {
+  return { id: 'mission-x', prompt: '', intent: product as never, products, steps: [], source: 'agnic', status: products.length ? 'ready' : 'no-results', summary: '', warnings: [], createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(), cacheHit: false, usage: { modelCalls: 0, agnicCalls: 1, inputTokens: 0, outputTokens: 0 }, counts: { discovered: 0, withinBudget: 0, shortlisted: products.length } };
+}
+/** A single-component scene whose category is deliberately "black office desk" -
+ * reproducing the real reported scenario exactly, so broadenSearchQuery has something to
+ * strip ("office desk"). */
+const singleDeskScene: BuildAnalysis = {
+  outcome: 'ANALYZED', outcomeMessage: 'ok',
+  scene: { title: 'Desk setup', description: 'A desk.', confidence: 0.8 },
+  components: [{
+    id: 'desk', name: 'Black office desk', category: 'black office desk', brand: null, model: null,
+    role: 'ESSENTIAL', componentKind: 'PURCHASABLE', parentComponentId: null, confidence: 0.8,
+    visibleEvidence: [], inferredRequirements: [], compatibilityRequirements: [], unknowns: [], quantity: 1,
+  }],
+  dependencies: [], existingItems: [], missingInformation: [], needsClarification: false, clarificationQuestions: [], buildSummary: 'ok',
+};
 
 // A fixed shared secret stands in for the real deployment config (`SENTINEL_BUILD_SESSION_
 // SECRET`) so every test below signs/verifies without touching the filesystem. Persisted-
@@ -114,7 +131,7 @@ describe('BuildService.search', () => {
     const service = new BuildService(analyzer, { runFromIntent: mockMission() });
     const session = await service.analyze(imageBase64, { budgetMaxAmount: 800 }, 'owner', signal());
     const view = await service.search('owner', session.token, ['desk'], undefined, undefined, signal());
-    expect(view.plan.items.find(i => i.componentId === 'desk')!.budgetAllocation!.amountMinor).toBe(80000);
+    expect(view.plan.items.find(i => i.componentId === 'desk')!.targetAllocation!.amountMinor).toBe(80000);
   });
 });
 
@@ -245,5 +262,75 @@ describe('componentKind: an integrated feature never triggers its own search', (
     expect(view.results.map(r => r.componentId).sort()).toEqual(['chair', 'desk']);
     const deskIntent = runFromIntent.mock.calls.find(call => call[0].productType === 'computer desk')?.[0];
     expect(deskIntent?.requiredFeatures).toContain('Pull-out keyboard/work shelf');
+  });
+});
+
+// Hardening after a real live search returned zero desk matches for "black office desk".
+// See PHASE5_REPORT.md.
+describe('zero-result search fallback: at most one deterministic (non-AI) broader search per component', () => {
+  it('test #1 and #2: a zero-result exact search triggers exactly one deterministic broader fallback, which then succeeds', async () => {
+    const analyzer: SceneAnalyzer = { analyzeBuildScene: vi.fn().mockResolvedValue(singleDeskScene) };
+    const runFromIntent = vi.fn(async (intent: { searchQuery: string }) => intent.searchQuery === 'black office desk' ? missionWith([]) : missionWith([product]));
+    const service = new BuildService(analyzer, { runFromIntent });
+    const session = await service.analyze(imageBase64, {}, 'owner', signal());
+    const view = await service.search('owner', session.token, ['desk'], undefined, undefined, signal());
+    expect(runFromIntent).toHaveBeenCalledTimes(2);
+    expect(runFromIntent.mock.calls[0][0].searchQuery).toBe('black office desk');
+    expect(runFromIntent.mock.calls[1][0].searchQuery).toBe('office desk');
+    expect(view.results[0].broadenedTo).toBe('office desk');
+    expect(view.results[0].products).toHaveLength(1);
+  });
+
+  it('test #3: when the fallback also finds nothing, the search stops cleanly with an honest empty result, not an error', async () => {
+    const analyzer: SceneAnalyzer = { analyzeBuildScene: vi.fn().mockResolvedValue(singleDeskScene) };
+    const runFromIntent = vi.fn(async () => missionWith([]));
+    const service = new BuildService(analyzer, { runFromIntent });
+    const session = await service.analyze(imageBase64, {}, 'owner', signal());
+    const view = await service.search('owner', session.token, ['desk'], undefined, undefined, signal());
+    expect(view.results[0].products).toEqual([]);
+    expect(view.results[0].error).toBeNull();
+    expect(view.results[0].broadenedTo).toBe('office desk');
+  });
+
+  it('test #4: never more than two Agnic searches for one component, even in the double-empty case', async () => {
+    const analyzer: SceneAnalyzer = { analyzeBuildScene: vi.fn().mockResolvedValue(singleDeskScene) };
+    const runFromIntent = vi.fn(async () => missionWith([]));
+    const service = new BuildService(analyzer, { runFromIntent });
+    const session = await service.analyze(imageBase64, {}, 'owner', signal());
+    await service.search('owner', session.token, ['desk'], undefined, undefined, signal());
+    expect(runFromIntent.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it('test #5: no AI/model call is used for query broadening - the scene analyzer is never called again during search', async () => {
+    const analyzeBuildScene = vi.fn().mockResolvedValue(singleDeskScene);
+    const analyzer: SceneAnalyzer = { analyzeBuildScene };
+    const runFromIntent = vi.fn(async (intent: { searchQuery: string }) => intent.searchQuery === 'black office desk' ? missionWith([]) : missionWith([product]));
+    const service = new BuildService(analyzer, { runFromIntent });
+    const session = await service.analyze(imageBase64, {}, 'owner', signal());
+    expect(analyzeBuildScene).toHaveBeenCalledTimes(1);
+    await service.search('owner', session.token, ['desk'], undefined, undefined, signal());
+    expect(analyzeBuildScene).toHaveBeenCalledTimes(1); // still exactly one - broadening never calls the model
+  });
+
+  it('a search with no strippable modifier at all does not attempt a second search', async () => {
+    const plainDeskScene: BuildAnalysis = { ...singleDeskScene, components: [{ ...singleDeskScene.components[0], category: 'desk' }] };
+    const analyzer: SceneAnalyzer = { analyzeBuildScene: vi.fn().mockResolvedValue(plainDeskScene) };
+    const runFromIntent = vi.fn(async () => missionWith([]));
+    const service = new BuildService(analyzer, { runFromIntent });
+    const session = await service.analyze(imageBase64, {}, 'owner', signal());
+    const view = await service.search('owner', session.token, ['desk'], undefined, undefined, signal());
+    expect(runFromIntent).toHaveBeenCalledTimes(1); // 'desk' alone has nothing to strip
+    expect(view.results[0].broadenedTo).toBeFalsy();
+  });
+
+  it('test #13: zero dispatch calls even with the fallback path exercised', async () => {
+    const dispatchSandbox = vi.fn();
+    const analyzer: SceneAnalyzer = { analyzeBuildScene: vi.fn().mockResolvedValue(singleDeskScene) };
+    const runFromIntent = vi.fn(async (intent: { searchQuery: string }) => intent.searchQuery === 'black office desk' ? missionWith([]) : missionWith([product]));
+    const missionsWithDispatchSpy = { runFromIntent, dispatchSandbox } as unknown as Pick<RequestMissionService, 'runFromIntent'>;
+    const service = new BuildService(analyzer, missionsWithDispatchSpy);
+    const session = await service.analyze(imageBase64, {}, 'owner', signal());
+    await service.search('owner', session.token, ['desk'], undefined, undefined, signal());
+    expect(dispatchSandbox).not.toHaveBeenCalled();
   });
 });

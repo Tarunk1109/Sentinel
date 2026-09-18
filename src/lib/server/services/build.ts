@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import type { UsageCounts } from "@/lib/domain/commerce";
-import { createBuildPlan, integratedFeaturesOf, isBuildComponentResultLike, type BuildAnalysis, type BuildComponentResult, type BuildConstraints, type BuildPlan, type BuildSessionPayload, buildProductIntentFromComponent } from "@/lib/domain/build";
+import { broadenSearchQuery, createBuildPlan, integratedFeaturesOf, isBuildComponentResultLike, type BuildAnalysis, type BuildComponentResult, type BuildConstraints, type BuildPlan, type BuildSessionPayload, buildProductIntentFromComponent } from "@/lib/domain/build";
 import { decodeAndValidateImage } from "../image-validation";
 import { buildAnalysisFixtures, buildProductFixtures, isBuildFixtureName, type BuildFixtureName } from "../demo/build-fixtures";
 import { buildSessionSigner, newSessionExpiry, type BuildSessionSigner } from "../build-session-token";
@@ -111,9 +111,20 @@ export class BuildService {
       } else {
         try {
           const features = integratedFeaturesOf(componentDef, payload.analysis);
-          const intent = clarification?.trim() ? buildProductIntentFromComponent(componentDef, { ...payload.constraints, requirements: [payload.constraints.requirements, clarification.trim()].filter(Boolean).join("; ") }, item.budgetAllocation, features) : (item.intent ?? buildProductIntentFromComponent(componentDef, payload.constraints, item.budgetAllocation, features));
-          const mission = await this.missions.runFromIntent(intent, owner, signal);
-          result = { componentId, products: mission.products, mission, source: "agnic", error: null };
+          const intent = clarification?.trim() ? buildProductIntentFromComponent(componentDef, { ...payload.constraints, requirements: [payload.constraints.requirements, clarification.trim()].filter(Boolean).join("; ") }, features) : (item.intent ?? buildProductIntentFromComponent(componentDef, payload.constraints, features));
+          let mission = await this.missions.runFromIntent(intent, owner, signal);
+          let broadenedTo: string | null = null;
+          // At most one deterministic (non-AI) broader search when the exact search finds
+          // nothing - never a loop, never a second AI call to invent the broader phrase.
+          if (mission.products.length === 0) {
+            const broaderQuery = broadenSearchQuery(intent.searchQuery);
+            if (broaderQuery) {
+              signal.throwIfAborted();
+              mission = await this.missions.runFromIntent({ ...intent, searchQuery: broaderQuery, productType: broaderQuery }, owner, signal);
+              broadenedTo = broaderQuery;
+            }
+          }
+          result = { componentId, products: mission.products, mission, source: "agnic", error: null, broadenedTo };
         } catch (error) {
           result = { componentId, products: [], mission: null, source: "agnic", error: error instanceof ProviderError ? error.message : "This component could not be searched. Please try again." };
         }

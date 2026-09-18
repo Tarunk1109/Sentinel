@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { productIntentSchema, type Country, type Currency, type Price, type ProductIntent } from "./commerce";
+import { productIntentSchema, type CompatibilityStatus, type Country, type Currency, type Price, type ProductCandidate, type ProductIntent, type RequestMission } from "./commerce";
 
 /**
  * Shared, serializable contracts for Build Mode. Never reads server credentials, never
@@ -168,7 +168,12 @@ export interface BuildPlanItem {
   quantity: number;
   owned: boolean;
   included: boolean;
-  budgetAllocation: Price | null;
+  /** A planning target from splitting the user's total build budget by weighted role -
+   * not a hard per-component cap. Search results are never filtered down to this amount
+   * (see `buildProductIntentFromComponent`); it only steers which candidate `selectBuildPick`
+   * prefers and whether it gets flagged `aboveTarget`. The only hard constraint is the
+   * total browse cost against the user's overall budget (see `calculateBuildTotal`). */
+  targetAllocation: Price | null;
   intent: ProductIntent | null;
 }
 export interface BuildPlan {
@@ -212,11 +217,21 @@ function defaultSelection(analysis: BuildAnalysis): string[] {
 function cap(value: string, max: number): string { return value.length > max ? value.slice(0, max) : value; }
 function dedupe(items: string[]): string[] { return [...new Set(items.map(item => item.trim()).filter(Boolean))]; }
 
-/** Reuses the exact existing Agnic search architecture: a component becomes a ProductIntent,
+/**
+ * Reuses the exact existing Agnic search architecture: a component becomes a ProductIntent,
  * nothing more. Unknown compatibility facts are carried forward as caveats, never invented.
  * `integratedFeatures` (see `integratedFeaturesOf`) are folded in as part of what this
- * component must have, never as anything searched or budgeted on their own. */
-export function buildProductIntentFromComponent(component: BuildComponent, constraints: BuildConstraints, budgetAllocation: Price | null, integratedFeatures: BuildComponent[] = []): ProductIntent {
+ * component must have, never as anything searched or budgeted on their own.
+ *
+ * `intent.budget.maxAmount` is the user's overall stated build budget, not this
+ * component's own weighted target allocation (`BuildPlanItem.targetAllocation`). The
+ * target is a planning number for ranking/display, not a search-time hard filter - passing
+ * it here would let `filterCandidates` (request-mission.ts) silently discard every real
+ * product priced even slightly above an internal planning split, which is exactly what
+ * produced zero results for a real component search. The one hard constraint that
+ * remains is the overall budget, enforced by `calculateBuildTotal`.
+ */
+export function buildProductIntentFromComponent(component: BuildComponent, constraints: BuildConstraints, integratedFeatures: BuildComponent[] = []): ProductIntent {
   const goal = constraints.goal?.trim();
   let originalRequest = `${component.name} for ${goal ? `a ${goal} build` : "a build"}, identified from an uploaded reference photo.`;
   if (integratedFeatures.length) originalRequest += ` Must include, built in: ${integratedFeatures.map(f => f.name).join(", ")}.`;
@@ -239,7 +254,7 @@ export function buildProductIntentFromComponent(component: BuildComponent, const
     searchQuery,
     productType: cap(component.category, 100),
     quantity: component.quantity,
-    budget: { maxAmount: budgetAllocation ? Number((budgetAllocation.amountMinor / 100).toFixed(2)) : null, currency: budgetAllocation?.currency ?? "CAD" },
+    budget: { maxAmount: constraints.budgetMaxAmount ?? null, currency: "CAD" },
     country: "CA",
     requiredFeatures: dedupe([...component.inferredRequirements, ...featureRequirements]).slice(0, 12),
     preferredFeatures: [],
@@ -277,14 +292,14 @@ export function createBuildPlan(analysis: BuildAnalysis, constraints: BuildConst
   const items: BuildPlanItem[] = purchasable.map(component => {
     const owned = isOwned(component, analysis);
     const included = selected.has(component.id) && !owned;
-    const budgetAllocation: Price | null = totalMinor != null && included && totalWeight > 0
+    const targetAllocation: Price | null = totalMinor != null && included && totalWeight > 0
       ? { amountMinor: Math.floor((totalMinor * ROLE_WEIGHT[component.role] * component.quantity) / totalWeight), currency: "CAD" }
       : null;
     const features = integratedFeaturesOf(component, analysis);
     return {
       componentId: component.id, name: component.name, role: component.role, quantity: component.quantity,
-      owned, included, budgetAllocation,
-      intent: included ? buildProductIntentFromComponent(component, constraints, budgetAllocation, features) : null,
+      owned, included, targetAllocation,
+      intent: included ? buildProductIntentFromComponent(component, constraints, features) : null,
     };
   });
   const dependencies = analysis.dependencies.filter(dep => purchasableIds.has(dep.sourceComponentId) && purchasableIds.has(dep.targetComponentId));
@@ -295,12 +310,95 @@ export function createBuildPlan(analysis: BuildAnalysis, constraints: BuildConst
 
 export interface BuildComponentResult {
   componentId: string;
-  products: import("./commerce").ProductCandidate[];
+  products: ProductCandidate[];
   /** The full mission for live results (so the existing checkout pipeline can review a
    * selection); always null for fixtures, which never reach checkout. */
-  mission: import("./commerce").RequestMission | null;
+  mission: RequestMission | null;
   source: "agnic" | "fixture";
   error: string | null;
+  /** Set only when the primary search returned zero results and exactly one deterministic
+   * (non-AI) broader search was then attempted (see `broadenSearchQuery`) - the query that
+   * was actually tried. Optional/absent on any result predating this field, and never set
+   * for a fixture-sourced result (there is no second fixture dataset to fall back to).
+   * Always shown honestly in the UI, whether or not the broadened search itself found
+   * anything - see PHASE5_REPORT.md. */
+  broadenedTo?: string | null;
+}
+
+const SEARCH_STYLE_MODIFIERS = new Set([
+  // colors
+  "black", "white", "grey", "gray", "silver", "gold", "brown", "blue", "navy", "red", "green", "pink", "beige", "tan",
+  // materials/finishes
+  "wood", "wooden", "metal", "metallic", "glass", "leather", "fabric", "plastic", "mesh", "steel", "aluminum", "walnut", "oak", "natural",
+  // aesthetic descriptors
+  "minimal", "minimalist", "modern", "vintage", "rustic", "sleek", "premium", "luxury", "stylish", "elegant", "classic", "contemporary",
+  // scale descriptors - dropped for breadth, not because size never matters: a broader
+  // category search still returns a workable range of sizes to choose from
+  "compact", "large", "small", "mini", "slim", "portable", "oversized", "standard",
+  // connectivity/feature descriptors that don't change the fundamental product category
+  "wireless", "wired", "bluetooth", "rgb", "backlit", "adjustable", "foldable", "stackable",
+]);
+
+/**
+ * Deterministic, non-AI query broadening for a zero-result Build component search (see
+ * `BuildService.runSearch`). Strips known low-priority visual/style words from the search
+ * phrase, keeping every other word - including whatever forms the core product category,
+ * which this can therefore never remove or change (it only ever deletes words it
+ * recognizes as style/material/aesthetic modifiers, never invents or reorders anything).
+ * Returns null when there is nothing to strip (already at the core category, or no
+ * recognized modifier present), so the caller knows not to attempt a second search.
+ */
+export function broadenSearchQuery(query: string): string | null {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return null;
+  const stripped = words.filter(word => !SEARCH_STYLE_MODIFIERS.has(word.toLowerCase()));
+  if (stripped.length === 0 || stripped.length === words.length) return null;
+  return stripped.join(" ");
+}
+
+export interface BuildPick {
+  product: ProductCandidate | null;
+  label: "SENTINEL_PICK" | "TOP_MATCH" | "NONE";
+  /** Set only when the picked product's price exceeds `target`. Never hides the product -
+   * see requirement 2B: an above-target candidate is shown, never silently relabelled. */
+  aboveTarget: Price | null;
+}
+
+const COMPATIBILITY_TIER: Record<CompatibilityStatus, number> = { VERIFIED: 3, LIKELY_COMPATIBLE: 2, NEEDS_VERIFICATION: 1, INCOMPATIBLE: 0 };
+
+/**
+ * Chooses which of a component's already-ranked candidates (from the shared, untouched
+ * Request Mode pipeline - `rankCandidates` in request-mission.ts) to present as the
+ * recommendation, and how confidently.
+ *
+ * `target` is a planning allocation, not a hard cap (`BuildPlanItem.targetAllocation`): if
+ * the top-ranked candidate exceeds it, a same-compatibility-tier candidate that IS within
+ * target is preferred instead; otherwise the top-ranked candidate is kept and flagged
+ * `aboveTarget` rather than silently swapped for a worse-verified but cheaper option.
+ *
+ * SENTINEL_PICK requires the chosen candidate to be genuinely defensible: within target
+ * (or no target set) AND backed by at least LIKELY_COMPATIBLE evidence - never just "the
+ * first result by default". This is intentionally unconditional, not skipped when the
+ * component "has no real compatibility requirements": `ProductIntent.compatibilityRequirements`
+ * (which a caller might otherwise consult to decide whether evidence was even "needed") also
+ * carries every photo-derived `unknowns` caveat via `buildProductIntentFromComponent`, and
+ * some of those (like a room's available space) can never be resolved by any product
+ * listing - a component-type-based exemption would leave those permanently stuck unable to
+ * ever earn SENTINEL_PICK for the wrong reason. NEEDS_VERIFICATION/INCOMPATIBLE always fall
+ * back to TOP_MATCH.
+ */
+export function selectBuildPick(products: ProductCandidate[], target: Price | null): BuildPick {
+  if (products.length === 0) return { product: null, label: "NONE", aboveTarget: null };
+  const top = products[0];
+  const topExceedsTarget = Boolean(target && top.price && top.price.amountMinor > target.amountMinor);
+  const withinTarget = topExceedsTarget && target ? products.find(p => !p.price || p.price.amountMinor <= target.amountMinor) : undefined;
+  const chosen = withinTarget && COMPATIBILITY_TIER[withinTarget.compatibility.status] === COMPATIBILITY_TIER[top.compatibility.status] ? withinTarget : top;
+  const aboveTarget: Price | null = target && chosen.price && chosen.price.amountMinor > target.amountMinor
+    ? { amountMinor: chosen.price.amountMinor - target.amountMinor, currency: target.currency }
+    : null;
+  const hasStrongEvidence = chosen.compatibility.status === "VERIFIED" || chosen.compatibility.status === "LIKELY_COMPATIBLE";
+  const defensible = !aboveTarget && hasStrongEvidence;
+  return { product: chosen, label: defensible ? "SENTINEL_PICK" : "TOP_MATCH", aboveTarget };
 }
 
 /** Structural check only, for merging a caller-echoed `priorResults` list (see
@@ -333,15 +431,23 @@ export function evaluateBuildDependencies(dependencies: BuildDependency[], resul
   });
 }
 
-export interface BuildTotal { subtotal: Price | null; missingComponentIds: string[]; overBudget: boolean }
+export interface BuildTotal { subtotal: Price | null; missingComponentIds: string[]; overBudget: boolean; overBy: Price | null }
 
-/** The browse-time total from real selected product prices - never a final checkout total. */
+/**
+ * The browse-time total from real selected product prices - never a final checkout total.
+ * Sums whatever `selectBuildPick` would actually recommend per component (so the total
+ * always matches what the UI shows as picked), not blindly the top-ranked product -
+ * underspend on one component (e.g. a keyboard well under its target) can offset overspend
+ * on another (e.g. a monitor over its target); only the total against the user's overall
+ * budget is a hard constraint (`overBudget`/`overBy`), never each component individually.
+ */
 export function calculateBuildTotal(plan: BuildPlan, results: Record<string, BuildComponentResult>): BuildTotal {
   const purchasable = plan.items.filter(item => item.included && !item.owned);
   let amountMinor = 0;
   const missingComponentIds: string[] = [];
   for (const item of purchasable) {
-    const price = results[item.componentId]?.products[0]?.price;
+    const products = results[item.componentId]?.products ?? [];
+    const price = selectBuildPick(products, item.targetAllocation).product?.price;
     if (!price) { missingComponentIds.push(item.componentId); continue; }
     amountMinor += price.amountMinor * item.quantity;
   }
@@ -349,5 +455,7 @@ export function calculateBuildTotal(plan: BuildPlan, results: Record<string, Bui
   // build's cost while components are still searching or failed.
   const subtotal: Price | null = missingComponentIds.length === 0 ? { amountMinor, currency: "CAD" } : null;
   const budgetMinor = plan.budget.maxAmount != null ? Math.round(plan.budget.maxAmount * 100) : null;
-  return { subtotal, missingComponentIds, overBudget: Boolean(subtotal && budgetMinor != null && subtotal.amountMinor > budgetMinor) };
+  const overBudget = Boolean(subtotal && budgetMinor != null && subtotal.amountMinor > budgetMinor);
+  const overBy: Price | null = overBudget ? { amountMinor: subtotal!.amountMinor - budgetMinor!, currency: "CAD" } : null;
+  return { subtotal, missingComponentIds, overBudget, overBy };
 }
