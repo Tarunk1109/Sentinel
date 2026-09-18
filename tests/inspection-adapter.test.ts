@@ -23,10 +23,11 @@ describe('bounded structured OpenAI image inspection', () => {
     expect(body.model).toBe('gpt-5.6-luna');
     expect(body.input[0].content[1]).toEqual({ type: 'input_image', image_url: image.dataUrl });
     expect(ctx.usage).toMatchObject({ modelCalls: 1, inputTokens: 900, outputTokens: 300 });
-    // A ~2.7 MB base64 payload must never inflate the reserved token estimate: the fixed image
-    // ceiling (a few thousand tokens) is used instead of the encoded string length.
+    // A ~2.7 MB base64 payload (2,000,012 chars) must never inflate the reserved token estimate:
+    // the fixed image ceiling plus the instructions' own length is used instead, which stays
+    // orders of magnitude below what including the encoded string itself would produce.
     const [, reservedTokens] = ledger.reserve.mock.calls[0];
-    expect(reservedTokens).toBeLessThan(10_000);
+    expect(reservedTokens).toBeLessThan(20_000);
   });
   it('honors SENTINEL_INSPECT_MODEL when it names a known model', async () => {
     vi.stubEnv('SENTINEL_INSPECT_MODEL', 'gpt-6-astra');

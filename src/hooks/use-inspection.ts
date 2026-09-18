@@ -28,6 +28,9 @@ export function useInspection() {
   const [source, setSource] = useState<"live" | "fixture" | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // Bumped on every new analysis so the results UI can key off it and reset its own
+  // subject-selection/user-intent state instead of leaking it into the next inspection.
+  const [analysisId, setAnalysisId] = useState(0);
   const controller = useRef<AbortController | null>(null);
 
   const clearPreview = useCallback(() => { setPreviewUrl(current => { if (current) URL.revokeObjectURL(current); return null; }); }, []);
@@ -73,6 +76,7 @@ export function useInspection() {
       if (!result?.analysis) throw new Error("The server returned an unreadable analysis.");
       setAnalysis(result.analysis);
       setSource(result.source ?? "live");
+      setAnalysisId(current => current + 1);
     } catch (cause) {
       if (controller.current === request && !(cause instanceof DOMException && cause.name === "AbortError")) {
         setAnalysisError(cause instanceof Error ? cause.message : "The image could not be analyzed. Please try again.");
@@ -84,5 +88,5 @@ export function useInspection() {
 
   const reset = useCallback(() => { controller.current?.abort(); controller.current = null; clearPreview(); setFile(null); setValidationError(null); setAnalysis(null); setSource(null); setAnalysisError(null); setIsAnalyzing(false); }, [clearPreview]);
 
-  return { file, previewUrl, validationError, selectFile, removeImage, analyze, analysis, source, isAnalyzing, analysisError, reset };
+  return { file, previewUrl, validationError, selectFile, removeImage, analyze, analysis, source, analysisId, isAnalyzing, analysisError, reset };
 }

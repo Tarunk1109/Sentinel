@@ -50,4 +50,12 @@ describe('Inspect Mode search reuses the Request Mode pipeline', () => {
     expect(a.id).toBe(b.id);
     expect(commerce.searchProducts).toHaveBeenCalledTimes(1);
   });
+  it('end-to-end: a multi-object cable+adapter inspection searches for the cable only, never a fabricated combined item', async () => {
+    const cableIntent = buildProductIntentFromInspection(inspectionFixtures['damaged-usb-cable-with-adapter']);
+    const { service, commerce } = setup();
+    const mission = await service.runFromIntent(cableIntent, 'owner', context().signal);
+    expect(commerce.searchProducts).toHaveBeenCalledWith(expect.objectContaining({ searchQuery: expect.stringContaining('cable') }), expect.anything());
+    expect(mission.intent.searchQuery.toLowerCase()).not.toContain('two-pin');
+    expect(mission.intent.originalRequest.toLowerCase()).not.toContain('adapter');
+  });
 });
