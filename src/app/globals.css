@@ -340,6 +340,26 @@ h1 > span { color: var(--primary); }
 .inspect-budget-field input { border: 0; border-radius: 0; }
 .inspect-honesty-note { font-size: 12px; line-height: 1.7; color: var(--muted-foreground); }
 .inspect-search-button { width: 100%; }
+.build-constraints-form { max-width: 862px; margin: 16px auto 0; display: flex; flex-direction: column; gap: 14px; }
+.build-role-group { display: flex; flex-direction: column; gap: 8px; }
+.build-component-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.build-component-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.build-component-row:last-child { border-bottom: 0; }
+.build-component-row label { display: flex; align-items: center; gap: 9px; cursor: pointer; min-width: 0; }
+.build-component-row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary); flex: none; }
+.build-component-row label span { overflow: hidden; text-overflow: ellipsis; }
+.build-unknown-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--warning); background: var(--warning-soft); border-radius: 5px; padding: 3px 6px; flex: none; }
+.build-allocation { font-size: 11px; color: var(--muted-foreground); flex: none; white-space: nowrap; }
+.build-component-results { border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.build-searching-note { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); }
+.build-product-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.build-product-option { border: 1px solid var(--border); border-radius: 9px; padding: 12px; display: flex; flex-direction: column; gap: 4px; position: relative; }
+.build-product-option > .recommendation { position: static; margin-bottom: 4px; align-self: flex-start; }
+.build-product-name { font-size: 12px; font-weight: 500; line-height: 1.4; }
+.build-product-price { font-size: 15px; font-weight: 600; }
+.build-product-merchant { font-size: 11px; color: var(--muted-foreground); }
+.build-total-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; background: var(--muted); border-radius: 9px; font-size: 13px; }
+.build-total-row strong { font-size: 16px; }
 
 @media (min-width: 1600px) {
   .main-content { max-width: 1380px; }

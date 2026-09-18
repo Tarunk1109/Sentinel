@@ -1,6 +1,6 @@
-# SENTINEL — Phase 4A
+# SENTINEL — Phase 5
 
-SENTINEL turns a Request Mode prompt, or an Inspect Mode photo, into real Agnic product discovery, an evidence-based shortlist, merchant preparation, and a safe checkout quote. The light dashboard shows actual server activity, fulfillment choices, budget blocks, and a separate sandbox checkout flow. Build remains upcoming. See [PHASE4A_REPORT.md](PHASE4A_REPORT.md) for what changed in this phase.
+SENTINEL turns a Request Mode prompt, an Inspect Mode photo of something broken, or a Build Mode reference photo of something to create, into real Agnic product discovery, an evidence-based shortlist, merchant preparation, and a safe checkout quote. The light dashboard shows actual server activity, fulfillment choices, budget blocks, and a separate sandbox checkout flow. See [PHASE4A_REPORT.md](PHASE4A_REPORT.md) (Inspect Mode) and [PHASE5_REPORT.md](PHASE5_REPORT.md) (Build Mode) for what changed in each phase.
 
 **Real purchase execution is unconditionally disabled.** The only dispatch implementation is a separate test flow requiring server-verified `is_test=true`, an explicitly configured test-card alias, a fresh quote, and the user's confirmation.
 
@@ -34,8 +34,9 @@ Open [SENTINEL](http://127.0.0.1:3001). Scripts bind loopback only. Rebuild and 
 | Mission and checkout orchestration | `src/lib/server/services/request-mission.ts`, `checkout.ts`, `live-contracts.ts`, `runtime.ts` |
 | Server safety and dispatch journal | `src/lib/server/safety.ts`, `dispatch-journal.ts`, `http.ts`, `checkout-route.ts`, `provider-error.ts` |
 | Inspect Mode: image validation, analysis, conversion | `src/lib/server/image-validation.ts`, `services/inspection.ts`, `lib/domain/inspection.ts` |
+| Build Mode: scene analysis, plan, dependencies, session store | `src/lib/domain/build.ts`, `src/lib/server/services/build.ts`, `demo/build-fixtures.ts` |
 | Light dashboard and checkout UI | `src/components/sentinel/`, `src/hooks/`, `src/app/globals.css` |
-| API boundaries | `src/app/api/missions/`, `checkout/`, `sandbox/`, `status/`, `inspect/` |
+| API boundaries | `src/app/api/missions/`, `checkout/`, `sandbox/`, `status/`, `inspect/`, `build/` |
 
 All credentials and authenticated requests stay server-side. Agnic adapters use a fixed origin, allowlisted operations, disabled redirects, bounded timeouts, and sanitized errors. Browser data contains normalized public fields, never raw provider responses, card information, delivery profiles, or internal signed browser URLs. Legacy demo data remains only for offline regression tests; live failures do not fall back to invented products.
 
@@ -56,6 +57,26 @@ image → one bounded multimodal analysis call → InspectionAnalysis (multi-obj
 - **Fixture-tested:** `src/lib/server/demo/inspection-fixtures.ts` provides fixtures for both real failures this mode has hit in live testing (a merged multi-object hallucination, an auto-replacement-of-an-intact-item bug) plus ambiguous-subject, missing-part, and outcome-failure cases, all used by the automated test suite; never used in normal execution. A local, explicit `SENTINEL_INSPECT_FIXTURE=<name>` env var can bypass the paid call during development only — the UI always marks that result as **DEVELOPMENT FIXTURE**.
 - **Cost control:** at most one multimodal call per inspection, plus the same optional second ranking call Request Mode already makes. No recursive vision calls, no automatic retries, no analysis while the user is still choosing a file.
 - **Still blocked:** checkout selection from an inspected product reaches the same Agnic sandbox merchant blocker described below and in `PHASE3_REPORT.md`; nothing in this phase changes that.
+
+## Build Mode
+
+Build Mode turns a reference photo ("I want to build something like this") into a commerce-ready bill of materials, reusing Inspect's image-validation and honesty conventions without importing its one-primary-subject assumption — a build scene intentionally has many relevant components, not one:
+
+```
+reference image + goal/already-own/requirements → one bounded scene-analysis call → BuildAnalysis
+  (scene, components with ESSENTIAL/RECOMMENDED/OPTIONAL/DECORATIVE roles, dependencies,
+   existingItems) → BuildPlan (weighted budget allocation, owned items excluded from
+   purchasing) → user reviews/edits the component checklist → up to 3 components searched
+   per click through the existing Agnic pipeline unchanged → browse total
+```
+
+- **Live:** image upload (identical validation to Inspect Mode), the single scene-analysis call (`analyzeBuildScene` in `src/lib/server/adapters/openai.ts`, model configurable via `SENTINEL_BUILD_MODEL`), a server-owned `BuildSession` (`src/lib/server/services/build.ts`) that stores only analysis/plan metadata - never the image - in a bounded, owner-scoped in-memory map. Each selected component becomes a `ProductIntent` (`buildProductIntentFromComponent` in `src/lib/domain/build.ts`) and reuses `RequestMissionService.runFromIntent` completely unmodified: no separate commerce client, no extra AI call beyond the one Request Mode already makes per search.
+- **Essential vs. decorative:** `createBuildPlan` allocates a stated budget by weighted functional role (ESSENTIAL > RECOMMENDED > OPTIONAL > DECORATIVE) and quantity, never equally and never exceeding the total; it is a coherent estimate, not a claimed optimization. A component the user says they already own is matched against the analysis's `existingItems` and kept for dependency context but is never allocated budget or auto-included for purchase.
+- **Bounded, user-controlled search:** nothing is searched automatically after analysis. The user reviews the component checklist (essentials/recommended pre-checked, decorative unchecked), optionally unchecks/rechecks items, then clicks **Find Products**, which searches at most 3 pending components per click; a **Find N More Products** button appears while any remain. Re-selecting components recomputes the plan and allocation before the next search.
+- **Cross-component compatibility, never hallucinated:** `evaluateBuildDependencies` checks a dependency (e.g. "the monitor arm must support the monitor's VESA pattern and weight") only against real, quoted measurement text present in both selected listings; without a shared quoted measurement it stays `NEEDS_VERIFICATION` - the same "quote it or it's unknown" rule Request Mode's evaluator already applies.
+- **Browse total, never a final price:** `calculateBuildTotal` sums real selected-product prices only once every included, non-owned component has a result; an incomplete selection shows "Pending remaining searches" rather than a misleadingly low partial sum. Exceeding the stated budget is flagged without ever silently raising it.
+- **Fixture-tested:** `src/lib/server/demo/build-fixtures.ts` provides three named scenes (`gaming-desk-setup`, `home-office-setup`, `simple-streaming-setup`), each with matching invented product results per component, clearly labelled `(DEVELOPMENT FIXTURE)` / "Fixture Demo Merchant (invented, not real)" and never routed through the real mission/checkout pipeline. A local, explicit `SENTINEL_BUILD_FIXTURE=<name>` env var can bypass the paid call during development only, and is rejected outright outside development/test - never a silent live fallback.
+- **Still blocked:** a selected Build component's checkout reaches the same Agnic sandbox merchant blocker described below; nothing in this phase touches that code path. See [PHASE5_REPORT.md](PHASE5_REPORT.md) for what is live, fixture-tested, and not yet live.
 
 ## Request and checkout flow
 
@@ -80,6 +101,8 @@ All mutation bodies are strict JSON. Same-origin/loopback checks, bounded bodies
 | `POST /api/missions` | `{prompt}`; JSON result or NDJSON activity stream |
 | `POST /api/inspect/analyze` | `{imageBase64, mimeType}`; one bounded multimodal analysis, or a labelled dev fixture |
 | `POST /api/inspect/search` | `{intent}`; runs the same mission pipeline as `/api/missions`, skipping intent extraction |
+| `POST /api/build/analyze` | `{imageBase64, mimeType, constraints?}`; one bounded scene analysis, or a labelled dev fixture |
+| `POST /api/build/search` | `{planId, selectedIds, clarification?}`; searches ≤3 pending components via the same mission pipeline; JSON result or NDJSON activity stream |
 | `POST /api/checkout/session` | `{missionId, productId}`; create/reuse owned selection |
 | `POST /api/checkout/prepare` | `{checkoutId}`; verify or explore selected merchant |
 | `POST /api/checkout/quote` | `{checkoutId, fulfillmentId?}`; safe quote or fulfillment re-quote |
@@ -99,7 +122,9 @@ There is no real-commerce dispatch route. Frontend `is_test` or merchant/amount 
 
 The service joins concurrent operations and disables confirmation before execution. Before dispatch it exclusively creates a durable attempt file under `.sentinel/sandbox-attempts/`, then records the returned order ID/status atomically. Failed or uncertain attempts remain claimed and must not be retried. The private attempt key derives from the browser owner, verified merchant ID, and variant SKU. It blocks another dispatch of that selection after checkout expiry or server restart. This deliberately permits only one attempt per selection and browser owner in the demo. Clearing browser cookies or using another application is outside this local guard; it is not provider-wide idempotency.
 
-Mission, checkout, quote, and selection state is bounded and held in memory. A restart clears those sessions; the private AI ledger and dispatch journal survive. After a restart or ambiguous order outcome, inspect the saved order in Agnic rather than starting another checkout. Do not delete these safety files to bypass a block. This architecture assumes one local server process and a persistent filesystem; it is not designed for multi-instance or ephemeral deployment. No database, accounts, or public authentication infrastructure was added.
+Mission, checkout, quote, selection, and Build session/plan state is bounded and held in memory. A restart clears those sessions; the private AI ledger and dispatch journal survive. After a restart or ambiguous order outcome, inspect the saved order in Agnic rather than starting another checkout. Do not delete these safety files to bypass a block. This architecture assumes one local server process and a persistent filesystem; it is not designed for multi-instance or ephemeral deployment. No database, accounts, or public authentication infrastructure was added.
+
+Because Build Mode is the first feature whose second step (`/api/build/search`) must find a session created by an earlier, separate request (`/api/build/analyze`), it can surface a `next dev`-only artifact the first time those two routes are hit in a fresh dev server: Next's on-demand per-route compilation can briefly instantiate the server module graph twice, so the very first search after the very first analyze in a new dev session may report "This build session has expired" even though the request was correct. Refreshing and retrying (or simply using the app normally, where other routes are typically warmed first) clears it, and it does not occur in a production build, which compiles the whole server upfront. See [PHASE5_REPORT.md](PHASE5_REPORT.md) for how this was isolated and confirmed.
 
 ## AI budget and optional gateway
 
@@ -133,8 +158,8 @@ npm test
 npm run build
 ```
 
-Automated integration tests use injected provider fixtures and never spend AI money. See [PHASE3_REPORT.md](PHASE3_REPORT.md) for Phase 3's measured results and [PHASE4A_REPORT.md](PHASE4A_REPORT.md) for Inspect Mode's live/fixture-tested/blocked status, test count, and validation results.
+Automated integration tests use injected provider fixtures and never spend AI money. See [PHASE3_REPORT.md](PHASE3_REPORT.md) for Phase 3's measured results, [PHASE4A_REPORT.md](PHASE4A_REPORT.md) for Inspect Mode's live/fixture-tested/blocked status, and [PHASE5_REPORT.md](PHASE5_REPORT.md) for Build Mode's.
 
 Official references: [Agnic REST checkout](https://docs.agnic.ai/docs/api-reference/checkout), [test checkout](https://docs.agnic.ai/docs/agentic-commerce/testing), [pricing](https://docs.agnic.ai/docs/agentic-commerce/limits-and-pricing), [OpenAI Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna), [Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), and [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
 
-Phase 4A stops here. Build, real cards, and real orders are not implemented.
+Phase 5 stops here. Real cards and real orders are not implemented. Live Build checkout selection remains blocked by the same external Agnic sandbox issue documented in `AGNIC_SUPPORT_MESSAGE.md`.

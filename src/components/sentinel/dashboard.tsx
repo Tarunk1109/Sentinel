@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, Check, CircleHelp, CircleDot, Hexagon, Layers3, LockKeyhole, Plus, ShieldCheck, ShoppingBag, Sparkles, Terminal, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, CircleHelp, CircleDot, Hexagon, LockKeyhole, Plus, ShieldCheck, ShoppingBag, Sparkles, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ModeCards } from "./mode-cards";
 import { RequestComposer } from "./request-composer";
 import { InspectPanel } from "./inspect-panel";
+import { BuildPanel } from "./build-panel";
 import { ProductResults } from "./product-results";
 import { ActivityPanel } from "./activity-panel";
 import { ApprovalPanel } from "./approval-panel";
@@ -14,15 +15,18 @@ import { useMission } from "@/hooks/use-mission";
 import type { Mode } from "@/lib/domain/types";
 import type { ActivityStep, ProductCandidate } from "@/lib/domain/commerce";
 
-type InfoDialog = "build" | "system" | "guide" | null;
+type InfoDialog = "system" | "guide" | null;
 
 function SentinelMark({ small = false }: { small?: boolean }) {
   return <span className={`sentinel-mark ${small ? "small" : ""}`} aria-hidden="true"><Hexagon strokeWidth={1.7} /><Check className="mark-check" strokeWidth={2.2} /></span>;
 }
 
+const modeNoun: Record<Mode, string> = { request: "request", inspect: "inspection", build: "build" };
+
 export function Dashboard() {
-  const [view, setView] = useState<Extract<Mode, "request" | "inspect">>("request");
+  const [view, setView] = useState<Mode>("request");
   const [inspectKey, setInspectKey] = useState(0);
+  const [buildKey, setBuildKey] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<ProductCandidate | null>(null);
   const [info, setInfo] = useState<InfoDialog>(null);
@@ -38,19 +42,18 @@ export function Dashboard() {
     document.getElementById("request")?.scrollIntoView({ behavior: "smooth", block: "center" });
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
   }
-  function focusInspect() {
-    document.getElementById("inspect-upload")?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
+  function focusInspect() { document.getElementById("inspect-upload")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
+  function focusBuild() { document.getElementById("build-upload")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
+  function focusView(mode: Mode) { if (mode === "inspect") focusInspect(); else if (mode === "build") focusBuild(); else focusRequest(); }
   function newMission() {
     reset(); setPrompt(""); setSelectedProduct(null); setInteractionSteps({});
-    setInspectKey(current => current + 1);
-    if (view === "inspect") focusInspect(); else focusRequest();
+    setInspectKey(current => current + 1); setBuildKey(current => current + 1);
+    focusView(view);
   }
   function chooseMode(mode: Mode) {
-    if (mode === "build") { setInfo("build"); return; }
     setView(mode);
     setSelectedProduct(null); setInteractionSteps({});
-    requestAnimationFrame(() => mode === "inspect" ? focusInspect() : focusRequest());
+    requestAnimationFrame(() => focusView(mode));
   }
   function selectProduct(product: ProductCandidate) {
     setSelectedProduct(product);
@@ -71,15 +74,16 @@ export function Dashboard() {
       {view === "request" ? <>
         <section className="hero" aria-labelledby="hero-title"><div className="eyebrow"><Sparkles size={13} /> YOUR AUTONOMOUS COMMERCE ASSISTANT</div><h1 id="hero-title">Tell SENTINEL<br className="mobile-break" /> what you need<span>.</span></h1><p className="hero-tagline">Understand. Verify. Purchase.</p><p className="hero-description">From a simple request to the right product.<br className="mobile-break" /> Evidence made clear. Every decision yours.</p></section>
         <RequestComposer prompt={prompt} onPromptChange={setPrompt} onSubmit={() => { setSelectedProduct(null); setInteractionSteps({}); void run(prompt.trim()); }} isRunning={isRunning} onCancel={cancel} error={error} inputRef={inputRef} status={status} />
-      </> : <InspectPanel key={inspectKey} status={status} isSearching={isRunning} onSearch={intentValue => { setSelectedProduct(null); setInteractionSteps({}); void runFromIntent(intentValue); }} />}
-      {intent && <section className="intent-bar" aria-label="Understood request"><span className="intent-label"><Check size={13} />UNDERSTOOD</span><strong>{intent.productType}</strong><span>{intent.budget.maxAmount === null ? "No budget specified" : `Up to ${new Intl.NumberFormat("en-CA", { style: "currency", currency: intent.budget.currency, currencyDisplay: "code" }).format(intent.budget.maxAmount)}`}</span><span>{intent.country} · Qty {intent.quantity}</span>{intent.compatibilityRequirements.map(requirement => <span key={requirement}>{requirement}</span>)}{intent.requiredFeatures.length > 0 && <span>{intent.requiredFeatures.join(" · ")}</span>}</section>}
-      <div className="workspace-toolbar"><div><span className="workspace-title">YOUR WORKSPACE</span><span className="workspace-caption">A clear path from intent to outcome.</span></div><Button variant="ghost" size="sm" onClick={newMission}><Plus size={14} />New {view === "inspect" ? "inspection" : "request"}</Button></div>
-      <div className="workspace-grid"><ProductResults mission={mission} isRunning={isRunning} selectedId={selectedProduct?.id ?? null} onSelect={selectProduct} /><ActivityPanel mission={mission} steps={activitySteps} intent={intent} isRunning={isRunning} /></div>
-      <div className="checkout-section"><ApprovalPanel mission={mission} product={selectedProduct} onStep={recordStep} onClear={() => { setSelectedProduct(null); setInteractionSteps({}); }} /></div>
+      </> : view === "inspect" ? <InspectPanel key={inspectKey} status={status} isSearching={isRunning} onSearch={intentValue => { setSelectedProduct(null); setInteractionSteps({}); void runFromIntent(intentValue); }} />
+        : <BuildPanel key={buildKey} status={status} />}
+      {view !== "build" && intent && <section className="intent-bar" aria-label="Understood request"><span className="intent-label"><Check size={13} />UNDERSTOOD</span><strong>{intent.productType}</strong><span>{intent.budget.maxAmount === null ? "No budget specified" : `Up to ${new Intl.NumberFormat("en-CA", { style: "currency", currency: intent.budget.currency, currencyDisplay: "code" }).format(intent.budget.maxAmount)}`}</span><span>{intent.country} · Qty {intent.quantity}</span>{intent.compatibilityRequirements.map(requirement => <span key={requirement}>{requirement}</span>)}{intent.requiredFeatures.length > 0 && <span>{intent.requiredFeatures.join(" · ")}</span>}</section>}
+      <div className="workspace-toolbar"><div><span className="workspace-title">YOUR WORKSPACE</span><span className="workspace-caption">A clear path from intent to outcome.</span></div><Button variant="ghost" size="sm" onClick={newMission}><Plus size={14} />New {modeNoun[view]}</Button></div>
+      {view !== "build" && <div className="workspace-grid"><ProductResults mission={mission} isRunning={isRunning} selectedId={selectedProduct?.id ?? null} onSelect={selectProduct} /><ActivityPanel mission={mission} steps={activitySteps} intent={intent} isRunning={isRunning} /></div>}
+      {view !== "build" && <div className="checkout-section"><ApprovalPanel mission={mission} product={selectedProduct} onStep={recordStep} onClear={() => { setSelectedProduct(null); setInteractionSteps({}); }} /></div>}
       <footer className="workspace-footer"><span><SentinelMark small />Intelligent commerce. Human control.</span><button onClick={() => setInfo("system")}>Powered by OpenAI + Agnic<ArrowUpRight size={12} /></button><span className="footer-security"><LockKeyhole size={12} />Real purchases locked</span></footer>
     </main>
     <Dialog open={info !== null} onOpenChange={open => { if (!open) setInfo(null); }}><DialogContent>
-      {info === "build" ? <><span className="dialog-icon"><Layers3 /></span><div><span className="dialog-eyebrow">UPCOMING MODE</span><DialogTitle>An idea becomes a parts list.</DialogTitle></div><DialogDescription>Build will turn a reference image into a bill of materials, then help find the components to bring it to life. This is not available yet.</DialogDescription><div className="dialog-callout"><Terminal size={18} /><p>Request and Inspect are ready for live product discovery.</p></div><Button onClick={() => { setInfo(null); setTimeout(focusRequest, 100); }}>Try Request Mode<ArrowRight /></Button></> : info === "system" ? <><span className="dialog-icon"><Workflow /></span><DialogTitle>Connected with care.</DialogTitle><DialogDescription>API credentials stay on the server. Credential detection does not prove authentication; a completed request confirms the providers responded. Real purchasing remains locked.</DialogDescription><div className="integration-list"><div><span><CircleDot size={16} />OpenAI reasoning</span><span>{mission ? "Connected for this request" : status ? `Credential ${status.aiCredential}` : "Status unavailable"}</span></div><div><span><ShoppingBag size={16} />Agnic discovery</span><span>{mission ? "Connected for this request" : status ? `Credential ${status.agnicCredential}` : "Status unavailable"}</span></div><div><span><LockKeyhole size={16} />Real purchase execution</span><span className="status-locked">Disabled</span></div></div>{status?.aiBudget && <p className="text-sm text-muted-foreground">AI usage accounted: C${status.aiBudget.spentCad.toFixed(3)} of C${status.aiBudget.limitCad.toFixed(2)}. Includes reservations; refresh to update. This app’s ledger does not track other account activity.</p>}<p className="text-sm leading-relaxed text-muted-foreground">Luna handles intent and simple ranking. Astra is reserved for technical compatibility when product specifications provide enough evidence. Up to two model calls per request, with no automatic retries.</p></> : <><span className="dialog-icon"><CircleHelp /></span><DialogTitle>From intent to informed choice.</DialogTitle><DialogDescription>Live products, visible progress, and an approval step that keeps you in control.</DialogDescription><ol className="guide-steps"><li><span>01</span><div><h3>Tell us what you need</h3><p>Type a request, or switch to Inspect and upload a photo of something broken or missing. Only submitting starts a search.</p></div></li><li><span>02</span><div><h3>Review the evidence</h3><p>Compare real listings and read what supports each match. Missing specifications stay clearly marked.</p></div></li><li><span>03</span><div><h3>Check the checkout details</h3><p>Choose a product, prepare its merchant when needed, and request a live quote. Real purchases are disabled. Sandbox purchases require a verified test merchant and your explicit confirmation.</p></div></li></ol><Button onClick={() => setInfo(null)}>Start exploring<ArrowRight /></Button></>}
+      {info === "system" ? <><span className="dialog-icon"><Workflow /></span><DialogTitle>Connected with care.</DialogTitle><DialogDescription>API credentials stay on the server. Credential detection does not prove authentication; a completed request confirms the providers responded. Real purchasing remains locked.</DialogDescription><div className="integration-list"><div><span><CircleDot size={16} />OpenAI reasoning</span><span>{mission ? "Connected for this request" : status ? `Credential ${status.aiCredential}` : "Status unavailable"}</span></div><div><span><ShoppingBag size={16} />Agnic discovery</span><span>{mission ? "Connected for this request" : status ? `Credential ${status.agnicCredential}` : "Status unavailable"}</span></div><div><span><LockKeyhole size={16} />Real purchase execution</span><span className="status-locked">Disabled</span></div></div>{status?.aiBudget && <p className="text-sm text-muted-foreground">AI usage accounted: C${status.aiBudget.spentCad.toFixed(3)} of C${status.aiBudget.limitCad.toFixed(2)}. Includes reservations; refresh to update. This app’s ledger does not track other account activity.</p>}<p className="text-sm leading-relaxed text-muted-foreground">Luna handles intent and simple ranking. Astra is reserved for technical compatibility when product specifications provide enough evidence. Up to two model calls per request, with no automatic retries.</p></> : <><span className="dialog-icon"><CircleHelp /></span><DialogTitle>From intent to informed choice.</DialogTitle><DialogDescription>Live products, visible progress, and an approval step that keeps you in control.</DialogDescription><ol className="guide-steps"><li><span>01</span><div><h3>Tell us what you need</h3><p>Type a request, upload a photo of something broken in Inspect, or upload a reference photo of something to create in Build. Only submitting starts a search.</p></div></li><li><span>02</span><div><h3>Review the evidence</h3><p>Compare real listings and read what supports each match. Missing specifications stay clearly marked.</p></div></li><li><span>03</span><div><h3>Check the checkout details</h3><p>Choose a product, prepare its merchant when needed, and request a live quote. Real purchases are disabled. Sandbox purchases require a verified test merchant and your explicit confirmation.</p></div></li></ol><Button onClick={() => setInfo(null)}>Start exploring<ArrowRight /></Button></>}
     </DialogContent></Dialog>
   </div>;
 }
