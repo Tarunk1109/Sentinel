@@ -45,10 +45,9 @@ export class RequestMissionService {
   private quotes = new Map<string, { expires: number; preview: SafePreview }>();
   private quoteJobs = new Map<string, Promise<SafePreview>>();
   constructor(private readonly reasoner: ProductReasoner, private readonly commerce: CommerceProvider) {}
-  async run(prompt: string, owner: string, signal: AbortSignal, emit: Emit = () => {}): Promise<RequestMission> {
+  private async submit(key: string, owner: string, signal: AbortSignal, emit: Emit, runner: (publish: Emit) => Promise<RequestMission>): Promise<RequestMission> {
     signal.throwIfAborted();
-    for (const [key, entry] of this.completed) if (Date.parse(entry.mission.expiresAt) <= Date.now()) this.completed.delete(key);
-    const key = createHash('sha256').update(`${owner}:${prompt.trim().replace(/\s+/g, ' ').toLowerCase()}`).digest('hex');
+    for (const [k, entry] of this.completed) if (Date.parse(entry.mission.expiresAt) <= Date.now()) this.completed.delete(k);
     const cached = this.completed.get(key);
     if (cached) return structuredClone({ ...cached.mission, cacheHit: true, usage: { modelCalls: 0, agnicCalls: 0, inputTokens: 0, outputTokens: 0 } });
     const existing = this.active.get(key);
@@ -61,19 +60,31 @@ export class RequestMissionService {
     const listeners = new Set([emit]);
     const events: MissionEvent[] = [];
     const publish: Emit = event => { events.push(event); listeners.forEach(listener => listener(event)); };
-    const promise = Promise.resolve().then(() => this.execute(prompt, signal, publish)).then(mission => {
+    const promise = Promise.resolve().then(() => runner(publish)).then(mission => {
       if (this.completed.size >= 40) this.completed.delete(this.completed.keys().next().value!);
       this.completed.set(key, { owner, mission: structuredClone(mission) }); return mission;
     }).finally(() => this.active.delete(key));
     this.active.set(key, { promise, events, listeners, owner });
     return promise;
   }
+  async run(prompt: string, owner: string, signal: AbortSignal, emit: Emit = () => {}): Promise<RequestMission> {
+    const key = createHash('sha256').update(`${owner}:${prompt.trim().replace(/\s+/g, ' ').toLowerCase()}`).digest('hex');
+    return this.submit(key, owner, signal, emit, publish => this.execute(prompt, signal, publish));
+  }
+  /** Skips the understand step: the intent already came from an inspection image analysis, not raw text. */
+  async runFromIntent(intent: ProductIntent, owner: string, signal: AbortSignal, emit: Emit = () => {}): Promise<RequestMission> {
+    const key = createHash('sha256').update(`${owner}:inspect:${JSON.stringify(intent)}`).digest('hex');
+    return this.submit(key, owner, signal, emit, publish => this.executeFromIntent(intent, signal, publish));
+  }
+  private stepSetter(steps: ActivityStep[], emit: Emit) {
+    return (id: StepId, status: ActivityStep['status'], detail: string) => {
+      const index = steps.findIndex(s => s.id === id); steps[index] = { ...steps[index], status, detail }; emit({ type: 'step', step: steps[index] });
+    };
+  }
   private async execute(prompt: string, signal: AbortSignal, emit: Emit): Promise<RequestMission> {
     const steps = initialSteps();
     steps.forEach(step => emit({ type: 'step', step }));
-    const step = (id: StepId, status: ActivityStep['status'], detail: string) => {
-      const index = steps.findIndex(s => s.id === id); steps[index] = { ...steps[index], status, detail }; emit({ type: 'step', step: steps[index] });
-    };
+    const step = this.stepSetter(steps, emit);
     const usage: UsageCounts = { modelCalls: 0, agnicCalls: 0, inputTokens: 0, outputTokens: 0 };
     const context = { signal, usage };
     step('understand', 'active', 'Extracting your request with the economical intent model.');
@@ -81,6 +92,22 @@ export class RequestMissionService {
     emit({ type: 'intent', intent });
     step('understand', 'complete', `${intent.productType} · ${intent.country} · ${intent.budget.maxAmount === null ? 'No budget specified' : `Budget ≤ ${intent.budget.maxAmount} ${intent.budget.currency}`}`);
     signal.throwIfAborted();
+    return this.runPipeline(prompt, intent, steps, usage, signal, emit);
+  }
+  /** The image analysis already produced a validated intent; only the discovery pipeline runs here. */
+  private async executeFromIntent(intent: ProductIntent, signal: AbortSignal, emit: Emit): Promise<RequestMission> {
+    const steps = initialSteps();
+    steps.forEach(step => emit({ type: 'step', step }));
+    const step = this.stepSetter(steps, emit);
+    const usage: UsageCounts = { modelCalls: 0, agnicCalls: 0, inputTokens: 0, outputTokens: 0 };
+    emit({ type: 'intent', intent });
+    step('understand', 'complete', `${intent.productType} · ${intent.country} · From your inspected photo · ${intent.budget.maxAmount === null ? 'No budget specified' : `Budget ≤ ${intent.budget.maxAmount} ${intent.budget.currency}`}`);
+    signal.throwIfAborted();
+    return this.runPipeline(intent.originalRequest, intent, steps, usage, signal, emit);
+  }
+  private async runPipeline(prompt: string, intent: ProductIntent, steps: ActivityStep[], usage: UsageCounts, signal: AbortSignal, emit: Emit): Promise<RequestMission> {
+    const step = this.stepSetter(steps, emit);
+    const context = { signal, usage };
     step('discover', 'active', 'Searching the Agnic commerce catalogue once, with up to 10 results.');
     const discovered = await this.commerce.searchProducts(intent, context);
     step('discover', 'complete', `${discovered.length} real catalogue results received.`);
