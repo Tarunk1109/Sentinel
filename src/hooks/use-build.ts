@@ -98,7 +98,7 @@ export function useBuild() {
     try {
       const response = await fetch("/api/build/search", {
         method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, signal: request.signal,
-        body: JSON.stringify({ planId: session.id, selectedIds: [...selectedIds], clarification: clarification?.trim() || undefined }),
+        body: JSON.stringify({ token: session.token, selectedIds: [...selectedIds], priorResults: session.results, clarification: clarification?.trim() || undefined }),
       });
       if (!response.ok) {
         const body: unknown = await response.json().catch(() => null);

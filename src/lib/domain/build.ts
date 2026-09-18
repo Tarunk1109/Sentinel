@@ -70,21 +70,56 @@ export type BuildAnalysis = z.infer<typeof buildAnalysisSchema>;
 /** DEVELOPMENT FIXTURE results are always labelled as such; never used silently in production. */
 export interface BuildAnalysisResponse { analysis: BuildAnalysis; source: "live" | "fixture" }
 
+export const buildConstraintsSchema = z.object({
+  budgetMaxAmount: z.number().positive().max(1000000).nullable().optional(),
+  goal: z.string().trim().max(200).optional(),
+  alreadyOwn: z.string().trim().max(300).optional(),
+  requirements: z.string().trim().max(300).optional(),
+}).strict();
+export type BuildConstraints = z.infer<typeof buildConstraintsSchema>;
+
 export const buildImageRequestSchema = z.object({
   imageBase64: z.string().min(1),
   mimeType: z.string().min(1).max(80),
-  constraints: z.object({
-    budgetMaxAmount: z.number().positive().max(1000000).nullable().optional(),
-    goal: z.string().trim().max(200).optional(),
-    alreadyOwn: z.string().trim().max(300).optional(),
-    requirements: z.string().trim().max(300).optional(),
-  }).strict().optional(),
+  constraints: buildConstraintsSchema.optional(),
 }).strict();
-export type BuildConstraints = NonNullable<z.infer<typeof buildImageRequestSchema>["constraints"]>;
+
+/**
+ * The signed, server-issued contents of a Build session token (see
+ * `lib/server/build-session-token.ts`). This is the entire trust boundary for the
+ * analyze -> search flow: everything in here is cryptographically bound together, so a
+ * component's role, budget allocation, and the analysis it came from can never be split
+ * apart or substituted by a client. Never includes image bytes or a secret.
+ */
+export const buildSessionPayloadSchema = z.object({
+  v: z.literal(1),
+  id: z.string().min(1).max(64),
+  owner: z.string().min(1).max(100),
+  analysis: buildAnalysisSchema,
+  constraints: buildConstraintsSchema,
+  source: z.enum(["live", "fixture"]),
+  fixtureName: z.string().min(1).max(60).nullable(),
+  usage: z.object({
+    modelCalls: z.number().int().nonnegative(),
+    agnicCalls: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+  }).strict(),
+  issuedAt: z.number().int().nonnegative(),
+  expiresAt: z.number().int().nonnegative(),
+}).strict();
+export type BuildSessionPayload = z.infer<typeof buildSessionPayloadSchema>;
 
 export const buildSearchRequestSchema = z.object({
-  planId: z.string().uuid(),
+  /** Opaque, server-signed. Carries the trusted analysis/constraints/owner; never parsed
+   * or trusted client-side. See `verifyBuildSession`. */
+  token: z.string().min(1).max(200_000),
   selectedIds: z.array(z.string().min(1).max(40)).max(12),
+  /** The caller's own previously-returned results, echoed back so a session with no
+   * server-side memory can still report a complete, accumulated view. Opaque display data,
+   * never trusted for pricing, ownership, or anything security-relevant - a client can only
+   * ever deceive itself by tampering with this. */
+  priorResults: z.array(z.unknown()).max(12).optional(),
   clarification: z.string().trim().max(300).optional(),
 }).strict();
 export type BuildSearchRequest = z.infer<typeof buildSearchRequestSchema>;
@@ -193,6 +228,13 @@ export interface BuildComponentResult {
   mission: import("./commerce").RequestMission | null;
   source: "agnic" | "fixture";
   error: string | null;
+}
+
+/** Structural check only, for merging a caller-echoed `priorResults` list (see
+ * `buildSearchRequestSchema`). Never used to trust pricing or product data - a value that
+ * fails this check is simply dropped, never surfaced as an error. */
+export function isBuildComponentResultLike(value: unknown): value is BuildComponentResult {
+  return Boolean(value) && typeof value === "object" && typeof (value as { componentId?: unknown }).componentId === "string";
 }
 
 export interface DependencyEvaluation { dependency: BuildDependency; status: "VERIFIED" | "NEEDS_VERIFICATION"; note: string }
