@@ -207,8 +207,43 @@ describe('Build session token: cross-process determinism and forgery resistance'
     expect(runFromIntent).toHaveBeenCalledTimes(3);
   });
 
-  // test #8 (max 3 searches per batch) is covered above by 'searches at most 3 pending
-  // components per call'; test #6 (owner binding) is covered above by 'requires session
-  // ownership'. Both are unchanged in spirit by this fix and are kept with the rest of
-  // BuildService.search's behavioral coverage rather than duplicated here.
+  // From the session-token fix's own list: test #8 (max 3 searches per batch) is covered
+  // above by 'searches at most 3 pending components per call'; test #6 (owner binding) is
+  // covered above by 'requires session ownership'. Both are unchanged in spirit by this
+  // fix and are kept with the rest of BuildService.search's behavioral coverage rather
+  // than duplicated here.
+});
+
+// Regression coverage for the real-image bug: a desk's built-in keyboard tray and storage
+// compartment were misclassified as separate purchasable components. Domain-level proof
+// that they can never become a plan item lives in build-domain.test.ts; this is the
+// end-to-end proof that the search step itself never processes one either.
+describe('componentKind: an integrated feature never triggers its own search', () => {
+  const deskWithStorage = buildAnalysisFixtures['desk-with-integrated-storage'];
+
+  it('component-model test #8: fixture search only ever runs for the desk and chair, never the built-in tray or storage compartment', async () => {
+    vi.stubEnv('NODE_ENV', 'test'); vi.stubEnv('SENTINEL_BUILD_FIXTURE', 'desk-with-integrated-storage');
+    const analyzer: SceneAnalyzer = { analyzeBuildScene: vi.fn() };
+    const runFromIntent = vi.fn();
+    const service = new BuildService(analyzer, { runFromIntent });
+    const session = await service.analyze(imageBase64, { budgetMaxAmount: 800 }, 'owner', signal());
+    // Explicitly forcing the integrated-feature ids into selectedIds, exactly as a
+    // tampered or buggy client might, to prove they still have no effect.
+    const view = await service.search('owner', session.token, ['desk', 'chair', 'keyboard-shelf', 'storage-compartment'], undefined, undefined, signal());
+    expect(runFromIntent).not.toHaveBeenCalled(); // fixture mode never touches the real pipeline
+    expect(view.results.map(r => r.componentId).sort()).toEqual(['chair', 'desk']);
+    expect(view.remainingIds).toHaveLength(0);
+  });
+
+  it('component-model test #8 (live path): a live search batch only ever includes the desk and chair, never the integrated features', async () => {
+    const analyzer: SceneAnalyzer = { analyzeBuildScene: vi.fn().mockResolvedValue(deskWithStorage) };
+    const runFromIntent = mockMission();
+    const service = new BuildService(analyzer, { runFromIntent });
+    const session = await service.analyze(imageBase64, { budgetMaxAmount: 800 }, 'owner', signal());
+    const view = await service.search('owner', session.token, ['desk', 'chair', 'keyboard-shelf', 'storage-compartment'], undefined, undefined, signal());
+    expect(runFromIntent).toHaveBeenCalledTimes(2);
+    expect(view.results.map(r => r.componentId).sort()).toEqual(['chair', 'desk']);
+    const deskIntent = runFromIntent.mock.calls.find(call => call[0].productType === 'computer desk')?.[0];
+    expect(deskIntent?.requiredFeatures).toContain('Pull-out keyboard/work shelf');
+  });
 });

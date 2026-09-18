@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import type { UsageCounts } from "@/lib/domain/commerce";
-import { createBuildPlan, isBuildComponentResultLike, type BuildAnalysis, type BuildComponentResult, type BuildConstraints, type BuildPlan, type BuildSessionPayload, buildProductIntentFromComponent } from "@/lib/domain/build";
+import { createBuildPlan, integratedFeaturesOf, isBuildComponentResultLike, type BuildAnalysis, type BuildComponentResult, type BuildConstraints, type BuildPlan, type BuildSessionPayload, buildProductIntentFromComponent } from "@/lib/domain/build";
 import { decodeAndValidateImage } from "../image-validation";
 import { buildAnalysisFixtures, buildProductFixtures, isBuildFixtureName, type BuildFixtureName } from "../demo/build-fixtures";
 import { buildSessionSigner, newSessionExpiry, type BuildSessionSigner } from "../build-session-token";
@@ -110,7 +110,8 @@ export class BuildService {
         result = { componentId, products, mission: null, source: "fixture", error: products.length ? null : "No development fixture products are configured for this component." };
       } else {
         try {
-          const intent = clarification?.trim() ? buildProductIntentFromComponent(componentDef, { ...payload.constraints, requirements: [payload.constraints.requirements, clarification.trim()].filter(Boolean).join("; ") }, item.budgetAllocation) : (item.intent ?? buildProductIntentFromComponent(componentDef, payload.constraints, item.budgetAllocation));
+          const features = integratedFeaturesOf(componentDef, payload.analysis);
+          const intent = clarification?.trim() ? buildProductIntentFromComponent(componentDef, { ...payload.constraints, requirements: [payload.constraints.requirements, clarification.trim()].filter(Boolean).join("; ") }, item.budgetAllocation, features) : (item.intent ?? buildProductIntentFromComponent(componentDef, payload.constraints, item.budgetAllocation, features));
           const mission = await this.missions.runFromIntent(intent, owner, signal);
           result = { componentId, products: mission.products, mission, source: "agnic", error: null };
         } catch (error) {

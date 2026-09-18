@@ -14,7 +14,7 @@ import type { ProductCandidate } from "@/lib/domain/commerce";
 function component(id: string, overrides: Partial<BuildComponent> & Pick<BuildComponent, "name" | "category" | "role">): BuildComponent {
   return {
     id, brand: null, model: null, confidence: 0.75, visibleEvidence: [], inferredRequirements: [],
-    compatibilityRequirements: [], unknowns: [], quantity: 1, ...overrides,
+    compatibilityRequirements: [], unknowns: [], quantity: 1, componentKind: "PURCHASABLE", parentComponentId: null, ...overrides,
   };
 }
 
@@ -94,6 +94,23 @@ export const buildAnalysisFixtures = {
     clarificationQuestions: ["What is your maximum budget?", "Do you already own a capture card or computer for streaming?"],
     buildSummary: "A simple desk streaming setup centered on a camera, microphone, and lighting, with an optional capture card.",
   },
+  "desk-with-integrated-storage": {
+    outcome: "ANALYZED",
+    outcomeMessage: "Identified a compact wooden computer desk with a built-in keyboard shelf and storage compartment, plus a separate folding chair.",
+    scene: { title: "Compact desk and chair setup", description: "A compact wooden computer desk with an integrated pull-out keyboard/work shelf and a lower storage compartment, next to a separate black folding chair.", confidence: 0.82 },
+    components: [
+      component("desk", { name: "Compact wooden computer desk", category: "computer desk", role: "ESSENTIAL", confidence: 0.88, visibleEvidence: ["Compact wooden desk surface with a pull-out shelf and an enclosed lower compartment"], inferredRequirements: ["Must fit a computer setup in a compact footprint"], unknowns: ["Exact desk dimensions", "Weight capacity"] }),
+      component("keyboard-shelf", { name: "Pull-out keyboard/work shelf", category: "keyboard shelf", role: "RECOMMENDED", confidence: 0.8, visibleEvidence: ["A pull-out shelf beneath the desktop, sized for a keyboard"], inferredRequirements: ["Must slide freely beneath the desktop"], componentKind: "INTEGRATED_FEATURE", parentComponentId: "desk" }),
+      component("storage-compartment", { name: "Lower storage compartment", category: "storage compartment", role: "RECOMMENDED", confidence: 0.75, visibleEvidence: ["An enclosed storage compartment below the desktop"], componentKind: "INTEGRATED_FEATURE", parentComponentId: "desk" }),
+      component("chair", { name: "Black folding chair", category: "folding chair", role: "ESSENTIAL", confidence: 0.85, visibleEvidence: ["A separate black folding chair beside the desk"], unknowns: ["Weight capacity", "Seat dimensions"] }),
+    ],
+    dependencies: [],
+    existingItems: [],
+    missingInformation: ["Total budget", "Room dimensions"],
+    needsClarification: true,
+    clarificationQuestions: ["What is your maximum budget?"],
+    buildSummary: "A compact desk-and-chair setup. The desk has a built-in pull-out keyboard shelf and lower storage compartment, which are integrated features of the desk, not separately purchasable products.",
+  },
 } as const satisfies Record<string, BuildAnalysis>;
 
 export type BuildFixtureName = keyof typeof buildAnalysisFixtures;
@@ -127,5 +144,13 @@ export const buildProductFixtures: Record<BuildFixtureName, Record<string, Produ
     "desk-mount-arm": [fixtureProduct("mount-1", "Camera desk mount arm", 5900, "Supports up to 2kg camera weight.")],
     "capture-card": [fixtureProduct("capture-1", "USB capture card", 6900, "HDMI to USB 3.0 capture card.")],
     "green-screen": [fixtureProduct("green-1", "Collapsible green screen", 4900, "150cm x 200cm collapsible backdrop.")],
+  },
+  "desk-with-integrated-storage": {
+    // Deliberately no entries for "keyboard-shelf"/"storage-compartment": they are
+    // integrated features of the desk and must never be independently searched. If a
+    // future regression ever tried, it would fail loudly (a fixture-not-configured
+    // error) rather than silently returning a fabricated separate product.
+    desk: [fixtureProduct("desk-5", "Compact wooden computer desk with pull-out shelf and storage", 15000, "A compact wooden computer desk with an integrated pull-out keyboard shelf and a lower storage compartment.")],
+    chair: [fixtureProduct("chair-3", "Black folding chair", 4000, "A black folding chair.")],
   },
 };

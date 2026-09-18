@@ -81,18 +81,34 @@ The pre-warming experiment above correctly identified the *trigger* (module inst
 
 Also ran this live against a real dev server (fixture mode, `SENTINEL_BUILD_FIXTURE=gaming-desk-setup`) as an end-to-end sanity check beyond the unit tests: 8 consecutive fresh analyze→search round trips (new cookie jar, brand-new token, no pre-warming, each `curl` call in its own process) succeeded on the first attempt every time — the exact scenario that used to fail intermittently. A payload-tampered token and a token replayed from a different cookie jar were each correctly rejected with HTTP 409. The dev server was stopped afterward; no real AI or Agnic calls were made.
 
+## 32b. September 18, 2026: the live multimodal test (see 33) found a real component-modeling bug, fixed at the architecture level
+
+The one live Build Mode test recommended in item 33 ran against a real photo: a compact wooden computer desk with an integrated pull-out keyboard/work shelf and a lower storage compartment, plus a separate black folding chair. The model correctly understood the overall scene but classified the keyboard shelf and storage compartment as their own separate `RECOMMENDED` purchasable components — they would each have gotten a budget allocation, a selection checkbox, and their own Agnic search, as if they were products sold on their own.
+
+**Root cause:** the component model had only one axis, `role` (ESSENTIAL/RECOMMENDED/OPTIONAL/DECORATIVE) — a priority signal, not a purchase-structure signal. Nothing in the schema or the prompt distinguished "a standalone thing you'd buy" from "a feature that's physically part of something else," so a visibly integrated feature had no way to be represented except as if it were its own product.
+
+**Fix:** added a second, orthogonal axis, `componentKind` (`PURCHASABLE` | `INTEGRATED_FEATURE` | `ACCESSORY` | `DECORATIVE`) and `parentComponentId` to `buildComponentSchema` (`src/lib/domain/build.ts`). `createBuildPlan` now filters to `purchasable = components.filter(c => c.componentKind !== "INTEGRATED_FEATURE")` before doing anything else — plan items, budget weighting, default selection, and dependency edges are all built only from that filtered set. An `INTEGRATED_FEATURE` component therefore never gets a plan row, a budget allocation, a checkbox, or a search, and any dependency edge naming one is dropped (it would never have its own search result to verify against). Its name and `inferredRequirements` are instead folded into its parent's own `ProductIntent` via `integratedFeaturesOf`/`buildProductIntentFromComponent` — a desk with a built-in keyboard tray searches for `"computer desk with pull-out keyboard/work shelf"`, one product, not two. `analyzeBuildScene`'s instructions (`src/lib/server/adapters/openai.ts`) now dedicate STEP 2b to exactly the question the fix needed: "is this object independently purchasable in the intended build, or is it visibly part of another object?", with the desk-drawer/keyboard-tray/monitor-arm examples given for this fix.
+
+**Expected corrected result for the real test image:** PURCHASABLE — "Compact wooden computer desk", "Black folding chair" (2 plan items, both ESSENTIAL, both budget-eligible). INTEGRATED_FEATURE of the desk, excluded from the plan entirely — "Pull-out keyboard/work shelf", "Lower storage compartment" (no budget, no checkbox, no search; folded into the desk's own search as required features). Verified with a new fixture, `desk-with-integrated-storage`, matching this exact scene.
+
+**New tests: 13** (306 → 319). 11 in `build-domain.test.ts` (the 10 required cases — built-in keyboard tray, integrated storage, standalone tray accessory, monitor + monitor stand, chair + armrests, shelving unit with built-in shelves, no budget allocation even if forced into `selectedIds`, feature requirements propagating into the parent's `ProductIntent`, purchasable count/browse total excluding features — plus 2 bonus tests confirming `DECORATIVE` stays independently purchasable unlike `INTEGRATED_FEATURE`, and that a dependency naming a feature is dropped) and 2 in `build-service.test.ts` (fixture-mode and live-mode end-to-end proof that search never processes an integrated feature, even when one is forced into `selectedIds`).
+
+**Validation:** `npx vitest run` — 319 passed, 0 failed. `npm run lint` — zero warnings. `npx tsc --noEmit` — zero errors. `npm run build` — production build succeeded. Secret scan of every touched file against the real `.env.local` credential values — zero matches. Fixtures only; zero live model calls; zero Agnic calls; zero dispatch calls.
+
 ## 33. Do I recommend one live Build Mode image test next?
 
-**Yes, with your explicit approval** — the fixture path has been exercised thoroughly (unit tests plus a full interactive run), but the actual multimodal reasoning quality (does the model correctly separate essential from decorative, invent a dependency, or hallucinate a brand on a real, cluttered reference photo) can only be judged against a real photo and a real model call, exactly as Inspect Mode's own Phase 4A→4B history showed real bugs that fixtures alone couldn't have caught.
+**Answered — see 32b.** One live test ran on September 18, 2026 and found the component-modeling bug described above, now fixed. The original recommendation and reasoning are kept below for the record.
 
-**Build Mode is ready for one optional live multimodal verification.**
+*Original text:* **Yes, with your explicit approval** — the fixture path has been exercised thoroughly (unit tests plus a full interactive run), but the actual multimodal reasoning quality (does the model correctly separate essential from decorative, invent a dependency, or hallucinate a brand on a real, cluttered reference photo) can only be judged against a real photo and a real model call, exactly as Inspect Mode's own Phase 4A→4B history showed real bugs that fixtures alone couldn't have caught.
+
+**Superseded — see 32b.** The live test ran, found the component-modeling bug, which is now fixed. Build Mode has not had a second live multimodal call since the fix (by design — the fix itself was verified with fixtures only, per instruction); a follow-up live call against the same or a similar photo would confirm the model now applies the STEP 2b purchasability distinction correctly, but none was made.
 
 REQUEST MODE: READY
 INSPECT MODE: READY
-BUILD MODE: READY
-LIVE BUILD MULTIMODAL TEST: NOT RUN
+BUILD MODE: READY (component model fixed after one live test; see 32b)
+LIVE BUILD MULTIMODAL TEST: RUN ONCE (September 18, 2026) — found and fixed a real bug
 AGNIC SANDBOX CHECKOUT: BLOCKED EXTERNALLY
 REAL-MONEY PURCHASE EXECUTION: DISABLED
-REAL MONEY SPENT DURING PHASE 5: C$0.00
+REAL MONEY SPENT DURING PHASE 5: C$0.00 (the one live scene-analysis call was billed to the AI budget ledger, not real money; no Agnic or checkout calls were made)
 
 Not merged into main. Stopping here and waiting for your approval.

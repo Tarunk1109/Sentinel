@@ -22,6 +22,22 @@ export type BuildOutcome = z.infer<typeof buildOutcomeSchema>;
 export const buildComponentRoleSchema = z.enum(["ESSENTIAL", "RECOMMENDED", "OPTIONAL", "DECORATIVE"]);
 export type BuildComponentRole = z.infer<typeof buildComponentRoleSchema>;
 
+/**
+ * Purchase structure, independent of `role`: `role` says how important a component is to
+ * the goal; `componentKind` says whether it is ever its own line item at all.
+ * - PURCHASABLE: a standalone item someone would normally buy on its own.
+ * - ACCESSORY: also standalone and separately bought, but optional/complementary rather
+ *   than core (a monitor arm, a desk mat).
+ * - DECORATIVE: visual styling that is still its own purchasable item if the user opts
+ *   in, but must never be auto-selected (see `defaultSelection`).
+ * - INTEGRATED_FEATURE: physically part of another component (`parentComponentId`) and
+ *   never sold separately - a desk's built-in keyboard tray, a chair's attached armrests.
+ *   Never gets a plan item, budget allocation, selection checkbox, or search of its own;
+ *   its evidence instead becomes part of its parent's own ProductIntent.
+ */
+export const buildComponentKindSchema = z.enum(["PURCHASABLE", "INTEGRATED_FEATURE", "ACCESSORY", "DECORATIVE"]);
+export type BuildComponentKind = z.infer<typeof buildComponentKindSchema>;
+
 export const buildComponentSchema = z.object({
   id: z.string().min(1).max(40),
   name: z.string().min(1).max(120),
@@ -29,6 +45,12 @@ export const buildComponentSchema = z.object({
   brand: z.string().max(120).nullable(),
   model: z.string().max(120).nullable(),
   role: buildComponentRoleSchema,
+  componentKind: buildComponentKindSchema,
+  /** Non-null only for componentKind INTEGRATED_FEATURE; the id of the component this is
+   * physically part of. A value that doesn't resolve to a real, non-feature component in
+   * the same analysis is treated as unparented (dropped from any parent's intent, never a
+   * crash or a fabricated separate purchase) - see `integratedFeaturesOf`. */
+  parentComponentId: z.string().min(1).max(40).nullable(),
   confidence: z.number().min(0).max(1),
   visibleEvidence: shortList,
   inferredRequirements: shortList,
@@ -154,32 +176,57 @@ function isOwned(component: BuildComponent, analysis: BuildAnalysis): boolean {
   });
 }
 
-/** Components auto-selected before the user reviews anything: essentials and recommendations, never decorative. */
+/** True only for a component that is ever its own line item - never an integrated feature. */
+function isPurchasableKind(component: BuildComponent): boolean {
+  return component.componentKind !== "INTEGRATED_FEATURE";
+}
+
+/** Every INTEGRATED_FEATURE component whose `parentComponentId` names this one. A feature
+ * naming a parent that isn't a real, purchasable component in this analysis simply never
+ * matches here - dropped from the parent's intent, never a crash and never promoted into
+ * a purchasable item of its own. */
+export function integratedFeaturesOf(component: BuildComponent, analysis: BuildAnalysis): BuildComponent[] {
+  return analysis.components.filter(c => c.componentKind === "INTEGRATED_FEATURE" && c.parentComponentId === component.id);
+}
+
+/** Components auto-selected before the user reviews anything: essentials and recommendations, never decorative, never an integrated feature (which is never separately selectable at all). */
 function defaultSelection(analysis: BuildAnalysis): string[] {
-  return analysis.components.filter(c => !isOwned(c, analysis) && (c.role === "ESSENTIAL" || c.role === "RECOMMENDED")).map(c => c.id);
+  return analysis.components.filter(c => isPurchasableKind(c) && !isOwned(c, analysis) && (c.role === "ESSENTIAL" || c.role === "RECOMMENDED")).map(c => c.id);
 }
 
 function cap(value: string, max: number): string { return value.length > max ? value.slice(0, max) : value; }
 function dedupe(items: string[]): string[] { return [...new Set(items.map(item => item.trim()).filter(Boolean))]; }
 
 /** Reuses the exact existing Agnic search architecture: a component becomes a ProductIntent,
- * nothing more. Unknown compatibility facts are carried forward as caveats, never invented. */
-export function buildProductIntentFromComponent(component: BuildComponent, constraints: BuildConstraints, budgetAllocation: Price | null): ProductIntent {
+ * nothing more. Unknown compatibility facts are carried forward as caveats, never invented.
+ * `integratedFeatures` (see `integratedFeaturesOf`) are folded in as part of what this
+ * component must have, never as anything searched or budgeted on their own. */
+export function buildProductIntentFromComponent(component: BuildComponent, constraints: BuildConstraints, budgetAllocation: Price | null, integratedFeatures: BuildComponent[] = []): ProductIntent {
   const goal = constraints.goal?.trim();
   let originalRequest = `${component.name} for ${goal ? `a ${goal} build` : "a build"}, identified from an uploaded reference photo.`;
+  if (integratedFeatures.length) originalRequest += ` Must include, built in: ${integratedFeatures.map(f => f.name).join(", ")}.`;
   if (constraints.requirements?.trim()) originalRequest += ` Additional requirement from the user: "${constraints.requirements.trim()}"`;
+  const featureRequirements = integratedFeatures.flatMap(feature => [feature.name, ...feature.inferredRequirements]);
+  const featureCompatibility = integratedFeatures.flatMap(feature => [
+    ...feature.compatibilityRequirements,
+    ...feature.unknowns.map(item => cap(`${item} (not confirmed by the uploaded photo)`, 180)),
+  ]);
   const compatibilityRequirements = dedupe([
     ...component.compatibilityRequirements,
     ...component.unknowns.map(item => cap(`${item} (not confirmed by the uploaded photo)`, 180)),
+    ...featureCompatibility,
   ]).slice(0, 12);
+  const searchQuery = integratedFeatures.length
+    ? cap(`${component.category} with ${dedupe(integratedFeatures.map(f => f.name.toLowerCase())).join(" and ")}`, 180)
+    : cap(component.category, 180);
   return productIntentSchema.parse({
     originalRequest: cap(originalRequest, 1000),
-    searchQuery: cap(component.category, 180),
+    searchQuery,
     productType: cap(component.category, 100),
     quantity: component.quantity,
     budget: { maxAmount: budgetAllocation ? Number((budgetAllocation.amountMinor / 100).toFixed(2)) : null, currency: budgetAllocation?.currency ?? "CAD" },
     country: "CA",
-    requiredFeatures: dedupe(component.inferredRequirements).slice(0, 12),
+    requiredFeatures: dedupe([...component.inferredRequirements, ...featureRequirements]).slice(0, 12),
     preferredFeatures: [],
     excludedFeatures: [],
     compatibilityRequirements,
@@ -196,28 +243,39 @@ export function buildProductIntentFromComponent(component: BuildComponent, const
  * cents from the total, never adds them). This is a coherent estimate, not a claimed
  * optimization - see PHASE5_REPORT.md. Owned items are kept for dependency context but are
  * never allocated budget and are never auto-included for purchase.
+ *
+ * An INTEGRATED_FEATURE component (e.g. a desk's built-in keyboard tray) never becomes its
+ * own `BuildPlanItem`: it has no plan row, no budget allocation, no selection checkbox, and
+ * is never searched - only `purchasable` components are. Its evidence is instead folded
+ * into its parent's own ProductIntent (see `buildProductIntentFromComponent`), and any
+ * dependency edge naming it is dropped rather than left pointing at a component that will
+ * never itself have a search result to verify against.
  */
 export function createBuildPlan(analysis: BuildAnalysis, constraints: BuildConstraints, selectedIds?: string[]): BuildPlan {
   if (analysis.outcome !== "ANALYZED") throw new Error("Cannot build a plan from an analysis that did not complete.");
+  const purchasable = analysis.components.filter(isPurchasableKind);
+  const purchasableIds = new Set(purchasable.map(c => c.id));
   const selected = new Set(selectedIds ?? defaultSelection(analysis));
   const totalMinor = constraints.budgetMaxAmount != null ? Math.round(constraints.budgetMaxAmount * 100) : null;
-  const includedNonOwned = analysis.components.filter(c => selected.has(c.id) && !isOwned(c, analysis));
+  const includedNonOwned = purchasable.filter(c => selected.has(c.id) && !isOwned(c, analysis));
   const totalWeight = includedNonOwned.reduce((sum, c) => sum + ROLE_WEIGHT[c.role] * c.quantity, 0);
-  const items: BuildPlanItem[] = analysis.components.map(component => {
+  const items: BuildPlanItem[] = purchasable.map(component => {
     const owned = isOwned(component, analysis);
     const included = selected.has(component.id) && !owned;
     const budgetAllocation: Price | null = totalMinor != null && included && totalWeight > 0
       ? { amountMinor: Math.floor((totalMinor * ROLE_WEIGHT[component.role] * component.quantity) / totalWeight), currency: "CAD" }
       : null;
+    const features = integratedFeaturesOf(component, analysis);
     return {
       componentId: component.id, name: component.name, role: component.role, quantity: component.quantity,
       owned, included, budgetAllocation,
-      intent: included ? buildProductIntentFromComponent(component, constraints, budgetAllocation) : null,
+      intent: included ? buildProductIntentFromComponent(component, constraints, budgetAllocation, features) : null,
     };
   });
+  const dependencies = analysis.dependencies.filter(dep => purchasableIds.has(dep.sourceComponentId) && purchasableIds.has(dep.targetComponentId));
   const warnings = ["Catalogue price and availability can change. Shipping and tax require a quote."];
   if (totalMinor != null && includedNonOwned.length === 0) warnings.push("No components are currently selected for purchase, so your budget was not allocated.");
-  return { title: analysis.scene.title, budget: { maxAmount: constraints.budgetMaxAmount ?? null, currency: "CAD" }, country: "CA", items, dependencies: analysis.dependencies, warnings };
+  return { title: analysis.scene.title, budget: { maxAmount: constraints.budgetMaxAmount ?? null, currency: "CAD" }, country: "CA", items, dependencies, warnings };
 }
 
 export interface BuildComponentResult {
