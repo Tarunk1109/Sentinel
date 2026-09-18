@@ -12,7 +12,7 @@ Build Mode is implemented on `astra/phase5-build`, reusing Inspect Mode's image 
 ## 5–7. Branch, commit, files
 
 5. **Build branch name:** `astra/phase5-build` (already existed at hand-off; continued on it, never worked on `main`).
-6. **Build commit hash:** recorded below after committing this phase's work.
+6. **Build commit hash:** `1ca502c`
 7. **Files changed:**
    - New: `src/lib/domain/build.ts`; `src/lib/server/services/build.ts`; `src/lib/server/demo/build-fixtures.ts`; `src/app/api/build/analyze/route.ts`; `src/app/api/build/search/route.ts`; `src/hooks/use-build.ts`; `src/components/sentinel/build-panel.tsx`; `src/components/sentinel/build-results.tsx`; `tests/build-domain.test.ts`; `tests/build-adapter.test.ts`; `tests/build-service.test.ts`; `tests/build-routes.test.ts`; `PHASE5_REPORT.md`.
    - Modified: `src/lib/server/adapters/openai.ts` (added `analyzeBuildScene`, sharing the existing structured-call helper, budget/rate-limit/error handling unchanged); `src/lib/server/ai-provider.ts`, `src/lib/server/services/live-contracts.ts` (added the `SceneAnalyzer` interface and wiring; `ProductReasoner`/`ImageInspector` contracts untouched); `src/lib/server/services/runtime.ts` (added `buildService`, reusing the existing `reasoner` and `missionService` singletons — no new provider/credential logic); `src/components/sentinel/dashboard.tsx`, `mode-cards.tsx` (Build nav now active, hides the shared Request/Inspect workspace grid only in Build view); `src/components/sentinel/inspect-upload.tsx` (generalized with optional copy/icon/id props, all defaulting to Inspect's exact existing text and behavior); `src/app/globals.css` (Build-specific classes, reusing existing Inspect/Request tokens and breakpoints); `.env.example`, `README.md`.
