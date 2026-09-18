@@ -126,7 +126,7 @@ Ran the dev server on a scratch port with `SENTINEL_INSPECT_FIXTURE` set to each
 ## Final report
 
 1. **Branch:** `claude/phase4-inspect` (still not merged into main)
-2. **New commit hash:** recorded below after committing
+2. **New commit hash:** `d8bd507`
 3. **Files changed:** `src/lib/domain/inspection.ts`, `src/lib/server/adapters/openai.ts`, `src/lib/server/demo/inspection-fixtures.ts`, `src/hooks/use-inspection.ts`, `src/components/sentinel/inspect-panel.tsx`, `src/components/sentinel/inspect-results.tsx`, `src/app/globals.css`, `tests/inspection-adapter.test.ts`, `tests/inspect-mission.test.ts`, plus new `tests/inspection-decision.test.ts` and this report. No files outside Inspect Mode were touched.
 4. **Multi-object grounding status:** READY — `detectedObjects[]` with per-object scoped evidence; verified against both fixtures and a live manual UI pass.
 5. **Primary subject selection status:** READY — prominence/focus/damage-based selection, with explicit `primarySubjectAmbiguous`/`CHOOSE_SUBJECT` fallback when genuinely unclear; no guessing.
