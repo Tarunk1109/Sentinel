@@ -433,7 +433,14 @@ h1 > span { color: var(--primary); }
   .mode-nav { order: 3; width: 100%; justify-content: center; gap: 9px; padding: 0 0 10px; }
   .mode-nav button { font-size: 12px; padding: 7px 7px; }
   .mode-nav button > span { display: inline; font-size: 10px; padding: 2px 3px; }
-  .test-banner { top: 111px; padding: 9px 17px; gap: 8px; font-size: 11px; }
+  /* Unlike every wider breakpoint, .header-inner wraps to two rows here (height: auto),
+   * so its rendered height varies with content instead of being a known fixed value - a
+   * hardcoded sticky `top` guessing that height (as the wider breakpoints correctly do,
+   * since their header height is fixed) can drift out of sync and let this banner's own
+   * sticky position land on top of the wrapped nav row, blocking taps on it. Dropping
+   * sticky here removes that dependency entirely: the banner scrolls away normally
+   * instead of needing to track a height it can't know. */
+  .test-banner { position: static; padding: 9px 17px; gap: 8px; font-size: 11px; }
   .test-banner > div { gap: 8px; }
   .test-banner > button { font-size: 0; gap: 0; }
   .test-banner > button > svg { height: 13px; width: 13px; }
