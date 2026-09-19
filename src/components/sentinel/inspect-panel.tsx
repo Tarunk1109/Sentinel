@@ -63,10 +63,10 @@ export function InspectPanel({ status, onSearch, isSearching }: { status: Runtim
   }
 
   return <>
-    <section className="hero inspect-hero" aria-labelledby="inspect-hero-title">
-      <div className="eyebrow"><ScanLine size={13} />INSPECT MODE</div>
-      <h1 id="inspect-hero-title">See it. Understand it.<br className="mobile-break" /> Decide what’s next<span>.</span></h1>
-      <p className="hero-tagline">Upload a photo. SENTINEL tells you what it sees - not just what to buy.</p>
+    <section className="hero inspect-hero mode-hero" aria-labelledby="inspect-hero-title">
+      <div className="eyebrow"><ScanLine size={13} />A LITTLE CLARITY, IN ONE PHOTO</div>
+      <h1 id="inspect-hero-title">See what’s there.<br />Find what’s <em>next.</em></h1>
+      <p className="hero-tagline">From a worn-out part to a mystery cable. Show us the item, and we’ll help you figure it out.</p>
     </section>
     <InspectUpload
       file={file} previewUrl={previewUrl} imageSource={imageSource} validationError={validationError}

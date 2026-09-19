@@ -12,20 +12,20 @@ const sourceLabel: Record<ImageSource, string> = { camera: "Captured photo", upl
 
 export function InspectUpload({
   file, previewUrl, validationError, onSelectFile, onRemove, onAnalyze, isAnalyzing, disabled, disabledReason,
-  id = "inspect", icon = <ScanLine size={16} />, heading = "Show SENTINEL what needs attention",
-  description = "Take a photo or upload an image of something broken, damaged, missing, or needing replacement.",
+  id = "inspect", icon = <ScanLine size={16} />, heading = "Let’s take a closer look",
+  description = "Add a clear photo of the item. We’ll help you understand what it needs.",
   exampleLabel = "Try photographing", exampleHints = defaultExampleHints,
   analyzeLabel = "Analyze Image", analyzingLabel = "Analyzing image…", previewAlt = "Uploaded item to inspect",
-  allowCamera = false, imageSource = null,
+  allowCamera = false, imageSource = null, beforeAnalyze,
 }: {
   file: File | null; previewUrl: string | null; validationError: string | null;
   onSelectFile: (file: File | null, source?: ImageSource) => void; onRemove: () => void; onAnalyze: () => void;
   isAnalyzing: boolean; disabled: boolean; disabledReason: string | null;
   id?: string; icon?: ReactNode; heading?: string; description?: string;
   exampleLabel?: string; exampleHints?: string[]; analyzeLabel?: string; analyzingLabel?: string; previewAlt?: string;
-  /** Opt-in only: Build Mode reuses this component without setting this, so its upload
-   * flow (single dropzone, "Replace image") stays byte-for-byte unchanged. */
+  /** Build keeps its single dropzone and replacement picker; camera capture is opt-in. */
   allowCamera?: boolean; imageSource?: ImageSource | null;
+  beforeAnalyze?: ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -45,8 +45,8 @@ export function InspectUpload({
     if (dropped) onSelectFile(dropped, "upload");
   }
 
-  return <section id={`${id}-upload`} className="composer inspect-composer" aria-labelledby={`${id}-heading`}>
-    <div className="inspect-heading"><h2 id={`${id}-heading`}>{icon}{heading}</h2><p>{description}</p></div>
+  return <section id={`${id}-upload`} className="composer inspect-composer input-surface upload-surface" aria-labelledby={`${id}-heading`}>
+    <div className="inspect-heading"><span className="input-step-label">{id === "build" ? "YOUR INSPIRATION" : "A PHOTO IS ALL IT TAKES"}</span><h2 id={`${id}-heading`}>{icon}{heading}</h2><p>{description}</p></div>
     {!file ? <>
       <div
         className={`inspect-dropzone ${allowCamera ? "capture-mode" : ""} ${dragActive ? "drag-active" : ""}`}
@@ -60,7 +60,10 @@ export function InspectUpload({
           onKeyDown: (event: KeyboardEvent) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); inputRef.current?.click(); } },
         })}
       >
+        <div className="upload-art" aria-hidden="true"><span className="upload-art-back" /><span className="upload-art-frame"><ImageUp size={35} strokeWidth={1.4} /></span><span className="upload-art-spark"><ScanLine size={17} /></span></div>
         {allowCamera ? <>
+          <p className="inspect-dropzone-title">One photo. A clearer next step.</p>
+          <p className="upload-drop-hint">Drag a photo here, or choose how to add it.</p>
           <div className="inspect-capture-actions">
             <Button type="button" onClick={() => cameraInputRef.current?.click()}><Camera size={16} />Take Photo</Button>
             <Button type="button" variant="outline" onClick={() => inputRef.current?.click()}><ImageUp size={16} />Upload Image</Button>
@@ -78,7 +81,6 @@ export function InspectUpload({
             onChange={event => handleChange(event, "camera")}
           />
         </> : <>
-          <ImageUp size={30} strokeWidth={1.3} aria-hidden="true" />
           <p className="inspect-dropzone-title">Drop an image here, or <span>browse files</span></p>
           <p className="inspect-dropzone-caption">Supported: JPG · PNG · WEBP · Up to 10 MB</p>
         </>}
@@ -113,6 +115,7 @@ export function InspectUpload({
           <Button type="button" variant="ghost" size="sm" disabled={isAnalyzing} onClick={onRemove}><X size={13} />Remove</Button>
           <input ref={inputRef} type="file" accept={ACCEPT} className="sr-only" aria-label={allowCamera ? "Upload a different image" : "Replace uploaded image"} onChange={event => handleChange(event, "upload")} />
         </div>
+        {beforeAnalyze}
         <Button type="button" className="inspect-analyze-button" disabled={isAnalyzing || disabled} onClick={onAnalyze}>{isAnalyzing ? <><LoaderCircle className="animate-spin motion-reduce:animate-none" />{analyzingLabel}</> : <>{analyzeLabel}<ArrowRight /></>}</Button>
         {disabled && disabledReason && <p className="configuration-note">{disabledReason}</p>}
       </div>

@@ -12,6 +12,7 @@ const exampleHints = ["Gaming desk setup", "Home office", "Streaming setup", "Co
 
 function BuildConstraintsForm({ form, onChange, disabled }: { form: BuildFormConstraints; onChange: (patch: Partial<BuildFormConstraints>) => void; disabled: boolean }) {
   return <div className="build-constraints-form">
+    <div className="build-constraints-heading"><span className="input-step-label">MAKE IT YOURS</span><h3>A few helpful details <span>optional</span></h3></div>
     <div className="inspect-constraints">
       <div><label htmlFor="build-budget-input">Budget (optional)</label><div className="inspect-budget-field"><span>C$</span><input id="build-budget-input" type="number" min={1} step={1} inputMode="decimal" disabled={disabled} value={form.budget} onChange={event => onChange({ budget: event.target.value })} placeholder="No limit" /></div></div>
       <div><label htmlFor="build-goal-input">Goal (optional)</label><input id="build-goal-input" type="text" maxLength={200} disabled={disabled} value={form.goal} onChange={event => onChange({ goal: event.target.value })} placeholder="e.g. gaming setup, home office, streaming desk" /></div>
@@ -70,22 +71,22 @@ export function BuildPanel({ status }: { status: RuntimeStatus | null }) {
   const unavailable = status !== null && (!status.aiEnabled || status.aiCredential === "missing");
 
   return <>
-    <section className="hero inspect-hero" aria-labelledby="build-hero-title">
-      <div className="eyebrow"><Hammer size={13} />BUILD MODE</div>
-      <h1 id="build-hero-title">Show SENTINEL<br className="mobile-break" /> what you want to create<span>.</span></h1>
-      <p className="hero-tagline">Upload a reference photo. SENTINEL turns it into a practical, compatible shopping plan.</p>
+    <section className="hero inspect-hero mode-hero" aria-labelledby="build-hero-title">
+      <div className="eyebrow"><Hammer size={13} />FROM INSPIRATION TO YOUR SPACE</div>
+      <h1 id="build-hero-title">Love the look?<br />Let’s <em>build it.</em></h1>
+      <p className="hero-tagline">Share a setup you love. Get a practical shopping plan, shaped around your space and budget.</p>
     </section>
     <InspectUpload
-      id="build" icon={<Hammer size={16} />} heading="Show SENTINEL what you want to create"
-      description="Upload a reference photo of a setup you want to build. SENTINEL will plan the components with you."
+      id="build" icon={<Hammer size={16} />} heading="Start with a little inspiration"
+      description="Add a reference photo. We’ll break it down into the things you need."
       exampleLabel="Try a reference photo of" exampleHints={exampleHints}
       analyzeLabel="Analyze Setup" analyzingLabel="Analyzing setup…" previewAlt="Uploaded reference setup"
       file={file} previewUrl={previewUrl} validationError={validationError}
       onSelectFile={selectFile} onRemove={removeImage} onAnalyze={() => void analyze()} isAnalyzing={isAnalyzing}
       disabled={unavailable}
       disabledReason={unavailable ? (status?.aiEnabled === false ? "AI requests are disabled in the server configuration." : "A server API credential is missing. Open integration status for details.") : null}
+      beforeAnalyze={!session ? <BuildConstraintsForm form={form} onChange={updateForm} disabled={isAnalyzing} /> : undefined}
     />
-    {file && !session && <BuildConstraintsForm form={form} onChange={updateForm} disabled={isAnalyzing} />}
     {analysisError && !isAnalyzing && <p className="error-message" role="alert">{analysisError}</p>}
     {session && <div className="workspace-grid inspect-analysis-grid">
       <BuildResults session={session} source={session.source} selectedIds={selectedIds} onToggle={toggleComponent} onSearch={clarification => void search(clarification)} isSearching={isSearching} searchingIds={searchingIds} searchError={searchError} searchDisabledReason={unavailable ? "Search uses the same server integrations as Request Mode; check integration status." : null} />
