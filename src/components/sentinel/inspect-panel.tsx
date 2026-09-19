@@ -49,7 +49,7 @@ function InspectActivity({ hasFile, isAnalyzing, analysis, analysisError }: { ha
 }
 
 export function InspectPanel({ status, onSearch, isSearching }: { status: RuntimeStatus | null; onSearch: (intent: ProductIntent) => void; isSearching: boolean }) {
-  const { file, previewUrl, validationError, selectFile, removeImage, analyze, analysis, source, analysisId, isAnalyzing, analysisError } = useInspection();
+  const { file, previewUrl, imageSource, validationError, selectFile, removeImage, analyze, analysis, source, analysisId, isAnalyzing, analysisError } = useInspection();
   const unavailable = status !== null && (!status.aiEnabled || status.aiCredential === "missing");
 
   function handleReady(decision: InspectionDecision, constraints: { clarification: string; extraRequirement: string; budgetMaxAmount: number | null }) {
@@ -69,9 +69,9 @@ export function InspectPanel({ status, onSearch, isSearching }: { status: Runtim
       <p className="hero-tagline">Upload a photo. SENTINEL tells you what it sees - not just what to buy.</p>
     </section>
     <InspectUpload
-      file={file} previewUrl={previewUrl} validationError={validationError}
+      file={file} previewUrl={previewUrl} imageSource={imageSource} validationError={validationError}
       onSelectFile={selectFile} onRemove={removeImage} onAnalyze={() => void analyze()} isAnalyzing={isAnalyzing}
-      disabled={unavailable}
+      disabled={unavailable} allowCamera
       disabledReason={unavailable ? (status?.aiEnabled === false ? "AI requests are disabled in the server configuration." : "A server API credential is missing. Open integration status for details.") : null}
     />
     {analysisError && !isAnalyzing && <p className="error-message" role="alert">{analysisError}</p>}

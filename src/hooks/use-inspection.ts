@@ -3,6 +3,10 @@
 import { useCallback, useRef, useState } from "react";
 import { MAX_IMAGE_BYTES, SUPPORTED_IMAGE_TYPES, type InspectionAnalysis } from "@/lib/domain/inspection";
 
+/** Where the currently-selected image came from. UI/analytics only - never sent to the
+ * server and never changes analysis behavior; both paths validate and analyze identically. */
+export type ImageSource = "camera" | "upload";
+
 function publicMessage(value: unknown, fallback: string): string {
   if (value && typeof value === "object" && "error" in value) {
     const error = value.error;
@@ -20,9 +24,17 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** Some mobile browsers/OSes hand back a HEIC/HEIF photo (Apple's default camera format)
+ * with no useful `type`, so the filename is checked too. Never trusted alone for anything
+ * beyond this one friendlier message - the real MIME/magic-byte check still runs after. */
+function isLikelyHeic(candidate: File): boolean {
+  return /^image\/hei[cf]$/i.test(candidate.type) || /\.hei[cf]$/i.test(candidate.name);
+}
+
 export function useInspection() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageSource, setImageSource] = useState<ImageSource | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<InspectionAnalysis | null>(null);
   const [source, setSource] = useState<"live" | "fixture" | null>(null);
@@ -35,22 +47,30 @@ export function useInspection() {
 
   const clearPreview = useCallback(() => { setPreviewUrl(current => { if (current) URL.revokeObjectURL(current); return null; }); }, []);
 
-  const selectFile = useCallback((candidate: File | null) => {
+  /** The single entry point for both Take Photo and Upload Image - same validation, same
+   * state, same downstream analysis either way. `source` is display-only. */
+  const selectFile = useCallback((candidate: File | null, source: ImageSource = "upload") => {
     controller.current?.abort(); controller.current = null;
     setAnalysis(null); setSource(null); setAnalysisError(null); setIsAnalyzing(false);
-    if (!candidate) { clearPreview(); setFile(null); setValidationError(null); return; }
+    if (!candidate) { clearPreview(); setFile(null); setImageSource(null); setValidationError(null); return; }
+    if (isLikelyHeic(candidate)) {
+      clearPreview(); setFile(null); setImageSource(null);
+      setValidationError("This image format isn't supported yet. Please retake using JPG/PNG if available, or upload another image.");
+      return;
+    }
     if (!SUPPORTED_IMAGE_TYPES.includes(candidate.type as never)) {
-      clearPreview(); setFile(null);
+      clearPreview(); setFile(null); setImageSource(null);
       setValidationError("Unsupported file type. Upload a JPG, PNG, or WEBP image.");
       return;
     }
     if (candidate.size > MAX_IMAGE_BYTES) {
-      clearPreview(); setFile(null);
+      clearPreview(); setFile(null); setImageSource(null);
       setValidationError("That image is larger than the 10 MB limit.");
       return;
     }
     setValidationError(null);
     setFile(candidate);
+    setImageSource(source);
     clearPreview();
     setPreviewUrl(URL.createObjectURL(candidate));
   }, [clearPreview]);
@@ -86,7 +106,7 @@ export function useInspection() {
     }
   }, [file, isAnalyzing]);
 
-  const reset = useCallback(() => { controller.current?.abort(); controller.current = null; clearPreview(); setFile(null); setValidationError(null); setAnalysis(null); setSource(null); setAnalysisError(null); setIsAnalyzing(false); }, [clearPreview]);
+  const reset = useCallback(() => { controller.current?.abort(); controller.current = null; clearPreview(); setFile(null); setImageSource(null); setValidationError(null); setAnalysis(null); setSource(null); setAnalysisError(null); setIsAnalyzing(false); }, [clearPreview]);
 
-  return { file, previewUrl, validationError, selectFile, removeImage, analyze, analysis, source, analysisId, isAnalyzing, analysisError, reset };
+  return { file, previewUrl, imageSource, validationError, selectFile, removeImage, analyze, analysis, source, analysisId, isAnalyzing, analysisError, reset };
 }

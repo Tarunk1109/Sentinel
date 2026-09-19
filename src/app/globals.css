@@ -296,12 +296,21 @@ h1 > span { color: var(--primary); }
 .inspect-dropzone-title { font-size: 14px; font-weight: 500; }
 .inspect-dropzone-title > span { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
 .inspect-dropzone-caption { font-size: 12px; color: var(--muted-foreground); }
+/* Take Photo / Upload Image: the dropzone still accepts a drag/drop, but two explicit
+ * buttons are now the primary target, so it is no longer itself a single click/keyboard
+ * control (see the `allowCamera` branch in inspect-upload.tsx). */
+.inspect-dropzone.capture-mode { cursor: default; padding: 34px 24px; gap: 14px; }
+.inspect-dropzone.capture-mode:hover, .inspect-dropzone.capture-mode:focus-visible { border-color: var(--input); background: var(--card); }
+.inspect-dropzone.capture-mode.drag-active { border-color: var(--primary); background: var(--accent); }
+.inspect-capture-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; width: 100%; }
+.inspect-capture-actions > button { min-width: 168px; }
 .inspect-example-chip { border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--muted-foreground); padding: 6px 9px; font-size: 12px; }
 .inspect-preview { background: var(--card); border: 1px solid var(--input); border-radius: 14px; box-shadow: var(--shadow-composer); overflow: hidden; }
 .inspect-preview-image { background: var(--muted); display: flex; align-items: center; justify-content: center; max-height: 360px; overflow: hidden; }
 .inspect-preview-img { width: 100%; max-height: 360px; height: auto; object-fit: contain; display: block; }
 .inspect-preview-actions { padding: 18px 21px; display: flex; flex-direction: column; gap: 12px; }
 .inspect-file-meta { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted-foreground); }
+.inspect-source-label { color: var(--subtle); }
 .inspect-preview-buttons { display: flex; gap: 9px; flex-wrap: wrap; }
 .inspect-analyze-button { width: 100%; }
 .inspect-analysis-grid { margin-top: 22px; }
@@ -478,7 +487,11 @@ h1 > span { color: var(--primary); }
   .intent-label { font-size: 10px; }
   .skeleton-grid > div:last-child { display: none; }
   .inspect-dropzone { padding: 30px 16px; }
+  .inspect-dropzone.capture-mode { padding: 26px 16px; }
+  .inspect-capture-actions { flex-direction: column; }
+  .inspect-capture-actions > button { width: 100%; min-width: 0; }
   .inspect-preview-actions { padding: 15px; }
+  .inspect-preview-buttons > button { flex: 1 1 auto; }
   .inspect-results-body { padding: 15px; }
   .inspect-confidence-row { flex-direction: column; gap: 10px; }
 }
