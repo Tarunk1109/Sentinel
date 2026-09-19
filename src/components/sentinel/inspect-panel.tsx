@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, Check, CircleDashed, LockKeyhole, Radio, ScanLine, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ModeArt } from "./mode-art";
 import { InspectUpload } from "./inspect-upload";
 import { InspectResults } from "./inspect-results";
 import { useInspection } from "@/hooks/use-inspection";
@@ -63,10 +64,13 @@ export function InspectPanel({ status, onSearch, isSearching }: { status: Runtim
   }
 
   return <>
+    <div className="visual-mode-stage">
     <section className="hero inspect-hero mode-hero" aria-labelledby="inspect-hero-title">
       <div className="eyebrow"><ScanLine size={13} />A LITTLE CLARITY, IN ONE PHOTO</div>
       <h1 id="inspect-hero-title">See what’s there.<br />Find what’s <em>next.</em></h1>
       <p className="hero-tagline">From a worn-out part to a mystery cable. Show us the item, and we’ll help you figure it out.</p>
+      <ModeArt mode="inspect" className="mode-hero-art" />
+      <p className="mode-privacy-note"><LockKeyhole size={12} />Your photo is analyzed only when you ask.</p>
     </section>
     <InspectUpload
       file={file} previewUrl={previewUrl} imageSource={imageSource} validationError={validationError}
@@ -74,6 +78,7 @@ export function InspectPanel({ status, onSearch, isSearching }: { status: Runtim
       disabled={unavailable} allowCamera
       disabledReason={unavailable ? (status?.aiEnabled === false ? "AI requests are disabled in the server configuration." : "A server API credential is missing. Open integration status for details.") : null}
     />
+    </div>
     {analysisError && !isAnalyzing && <p className="error-message" role="alert">{analysisError}</p>}
     {analysis && <div className="workspace-grid inspect-analysis-grid">
       <InspectResults key={analysisId} analysis={analysis} source={source ?? "live"} onReady={handleReady} isSearching={isSearching} searchDisabledReason={unavailable ? "Search uses the same server integrations as Request Mode; check integration status." : null} />

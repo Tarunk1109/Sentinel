@@ -1,0 +1,37 @@
+.mode-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.mode-art-object,
+.mode-art-note {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 550ms cubic-bezier(.2, .7, .2, 1);
+}
+
+.mode-feature:hover .mode-art-object,
+.mode-feature:focus-visible .mode-art-object {
+  transform: translateY(-4px);
+}
+
+.mode-feature:hover .mode-art-note,
+.mode-feature:focus-visible .mode-art-note {
+  transform: translate(3px, -3px) rotate(3deg);
+}
+
+.mode-feature:hover .mode-art-build .mode-art-object,
+.mode-feature:focus-visible .mode-art-build .mode-art-object {
+  transform: translateY(-3px) scale(1.025);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-art-object,
+  .mode-art-note {
+    transition: none;
+    transform: none !important;
+  }
+}

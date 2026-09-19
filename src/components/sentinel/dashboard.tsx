@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, CircleHelp, CircleDot, Hexagon, LockKeyhole, Plus, ShieldCheck, ShoppingBag, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { QuickStart } from "./quick-start";
 import { ModeCards } from "./mode-cards";
 import { ModeOverview, SimpleJourney, WelcomeHero } from "./welcome";
 import { RequestComposer } from "./request-composer";
@@ -70,14 +71,14 @@ export function Dashboard() {
     <header className="site-header"><div className="header-inner">
       <a href="#main" className="brand" aria-label="SENTINEL home"><SentinelMark /><span>SENTINEL</span><span className="brand-beta">BETA</span></a>
       <ModeCards active={view} onSelect={chooseMode} />
-      <div className="header-actions"><button aria-label="Integration status" className={`connection-button ${mission ? "connected" : ""}`} onClick={() => setInfo("system")}><span className="connection-dot" /><span>{credentialLabel}</span><ArrowUpRight size={13} /></button><Button variant="ghost" size="icon" className="help-button" onClick={() => setInfo("guide")} aria-label="Open quick guide"><CircleHelp size={18} /></Button></div>
+      <div className="header-actions"><QuickStart disabled={isRunning} onChooseMode={chooseMode} onUseExample={example => { chooseMode("request"); setPrompt(example); requestAnimationFrame(focusRequest); }} /><button aria-label="Integration status" className={`connection-button ${mission ? "connected" : ""}`} onClick={() => setInfo("system")}><span className="connection-dot" /><span>{credentialLabel}</span><ArrowUpRight size={13} /></button><Button variant="ghost" size="icon" className="help-button" onClick={() => setInfo("guide")} aria-label="Open quick guide"><CircleHelp size={18} /></Button></div>
     </div></header>
     <div className="test-banner"><div><span className="test-badge"><ShieldCheck size={13} />YOU’RE IN CONTROL</span><span className="banner-separator">·</span><span>You choose what happens next. Real purchases are disabled.</span></div><button onClick={() => setInfo("system")}>About this preview<ArrowUpRight size={12} /></button></div>
-    <main id="main" tabIndex={-1} className="main-content">
-      {view === "request" ? <>
+    <main id="main" tabIndex={-1} className="main-content"><div className="studio-wayfinding"><span>YOUR WORKSPACE<span>/</span>{view === "request" ? "DISCOVER" : view === "inspect" ? "INSPECT" : "CREATE"}</span><span className="studio-edition">A little intelligence for everyday life.</span></div>
+      {view === "request" ? <div className="request-stage">
         <WelcomeHero />
         <RequestComposer prompt={prompt} onPromptChange={setPrompt} onSubmit={() => { setSelectedProduct(null); setInteractionSteps({}); void run(prompt.trim()); }} isRunning={isRunning} onCancel={cancel} error={error} inputRef={inputRef} status={status} />
-      </> : view === "inspect" ? <InspectPanel key={inspectKey} status={status} isSearching={isRunning} onSearch={intentValue => { setSelectedProduct(null); setInteractionSteps({}); void runFromIntent(intentValue); }} />
+      </div> : view === "inspect" ? <InspectPanel key={inspectKey} status={status} isSearching={isRunning} onSearch={intentValue => { setSelectedProduct(null); setInteractionSteps({}); void runFromIntent(intentValue); }} />
         : <BuildPanel key={buildKey} status={status} />}
       {view !== "build" && intent && <section className="intent-bar" aria-label="Understood request"><span className="intent-label"><Check size={13} />UNDERSTOOD</span><strong>{intent.productType}</strong><span>{intent.budget.maxAmount === null ? "No budget specified" : `Up to ${new Intl.NumberFormat("en-CA", { style: "currency", currency: intent.budget.currency, currencyDisplay: "code" }).format(intent.budget.maxAmount)}`}</span><span>{intent.country} · Qty {intent.quantity}</span>{intent.compatibilityRequirements.map(requirement => <span key={requirement}>{requirement}</span>)}{intent.requiredFeatures.length > 0 && <span>{intent.requiredFeatures.join(" · ")}</span>}</section>}
       {view !== "build" && hasWorkspace && <>

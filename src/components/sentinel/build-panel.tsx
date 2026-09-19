@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, CircleDashed, Hammer, LockKeyhole, Radio, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ModeArt } from "./mode-art";
 import { InspectUpload } from "./inspect-upload";
 import { BuildResults } from "./build-results";
 import { useBuild, type BuildFormConstraints } from "@/hooks/use-build";
@@ -71,10 +72,13 @@ export function BuildPanel({ status }: { status: RuntimeStatus | null }) {
   const unavailable = status !== null && (!status.aiEnabled || status.aiCredential === "missing");
 
   return <>
+    <div className="visual-mode-stage">
     <section className="hero inspect-hero mode-hero" aria-labelledby="build-hero-title">
       <div className="eyebrow"><Hammer size={13} />FROM INSPIRATION TO YOUR SPACE</div>
       <h1 id="build-hero-title">Love the look?<br />Let’s <em>build it.</em></h1>
       <p className="hero-tagline">Share a setup you love. Get a practical shopping plan, shaped around your space and budget.</p>
+      <ModeArt mode="build" className="mode-hero-art" />
+      <p className="mode-privacy-note"><LockKeyhole size={12} />Your photo is analyzed only when you ask.</p>
     </section>
     <InspectUpload
       id="build" icon={<Hammer size={16} />} heading="Start with a little inspiration"
@@ -87,6 +91,7 @@ export function BuildPanel({ status }: { status: RuntimeStatus | null }) {
       disabledReason={unavailable ? (status?.aiEnabled === false ? "AI requests are disabled in the server configuration." : "A server API credential is missing. Open integration status for details.") : null}
       beforeAnalyze={!session ? <BuildConstraintsForm form={form} onChange={updateForm} disabled={isAnalyzing} /> : undefined}
     />
+    </div>
     {analysisError && !isAnalyzing && <p className="error-message" role="alert">{analysisError}</p>}
     {session && <div className="workspace-grid inspect-analysis-grid">
       <BuildResults session={session} source={session.source} selectedIds={selectedIds} onToggle={toggleComponent} onSearch={clarification => void search(clarification)} isSearching={isSearching} searchingIds={searchingIds} searchError={searchError} searchDisabledReason={unavailable ? "Search uses the same server integrations as Request Mode; check integration status." : null} />

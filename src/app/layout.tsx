@@ -4,6 +4,9 @@ import "@fontsource-variable/geist-mono";
 import "./globals.css";
 import "./studio.css";
 import "@/components/sentinel/input-surfaces.css";
+import "@/components/sentinel/mode-art.css";
+import "@/components/sentinel/quick-start.css";
+import "./atelier.css";
 
 export const metadata: Metadata = {
   title: "SENTINEL — Autonomous Commerce",
