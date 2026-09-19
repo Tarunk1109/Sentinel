@@ -84,6 +84,10 @@ reference image + goal/already-own/requirements → one bounded scene-analysis c
 - **Fixture-tested:** `src/lib/server/demo/build-fixtures.ts` provides three named scenes (`gaming-desk-setup`, `home-office-setup`, `simple-streaming-setup`), each with matching invented product results per component, clearly labelled `(DEVELOPMENT FIXTURE)` / "Fixture Demo Merchant (invented, not real)" and never routed through the real mission/checkout pipeline. A local, explicit `SENTINEL_BUILD_FIXTURE=<name>` env var can bypass the paid call during development only, and is rejected outright outside development/test - never a silent live fallback.
 - **Still blocked:** a selected Build component's checkout reaches the same Agnic sandbox merchant blocker described below; nothing in this phase touches that code path. See [PHASE5_REPORT.md](PHASE5_REPORT.md) for what is live, fixture-tested, and not yet live.
 
+## Autopilot and Voice (headless core)
+
+API and domain logic only; no UI is wired yet. **Autopilot** turns a standing mandate ("keep Coke, Sprite and Fanta stocked, weekly, at most C$70") into scheduled or on-demand runs that generate the same `ProductIntent` Request Mode uses, search through the existing commerce pipeline only when explicitly asked, and return an auditable mandate decision: `AUTO_AUTHORIZED`, `NEEDS_APPROVAL` or `BLOCKED`. `AUTO_AUTHORIZED` means the mandate permits the action; nothing is ever purchased, and every run carries `purchaseExecuted: false`. **Voice** adds a browser `SpeechRecognition` adapter and a deterministic, zero-model-call transcript interpreter that returns a command (search request, autopilot draft, pause/resume/run-now, clarification) for the UI to act on; it can only draft an autopilot, never activate one or buy anything. Autopilot state is in memory and there is no background scheduler. See [docs/AUTOPILOT_VOICE_ENGINEERING.md](docs/AUTOPILOT_VOICE_ENGINEERING.md) and the UI contract in [docs/AUTOPILOT_VOICE_UI_CONTRACT.md](docs/AUTOPILOT_VOICE_UI_CONTRACT.md).
+
 ## Request and checkout flow
 
 1. **Submit explicitly.** Example chips only fill the input. Luna extracts constraints with CA/CAD defaults. One search retrieves up to ten real listings; no typing calls or automatic retries run.
@@ -117,6 +121,16 @@ All mutation bodies are strict JSON. Same-origin/loopback checks, bounded bodies
 | `POST /api/sandbox/catalog` | `{}`; inspect the server-selected official test merchant |
 | `POST /api/sandbox/session` | `{productId}` from the verified sandbox catalogue |
 | `POST /api/sandbox/confirm` | `{checkoutId, quoteId, confirmed:true, confirmationText:"Confirm Test Purchase"}` |
+| `GET`/`POST /api/autopilot/policies` | List this session's autopilots / create a DRAFT |
+| `GET`/`PATCH /api/autopilot/policies/:id` | Read / edit (mandate fields only while DRAFT or PAUSED) |
+| `POST /api/autopilot/policies/:id/{activate,pause,resume}` | Lifecycle; activate and resume require `{confirm:true}` |
+| `POST /api/autopilot/policies/:id/evaluate` | Run now: trigger check + intent generation; never searches |
+| `POST /api/autopilot/policies/:id/search` | `{runId, itemId}`; existing mission pipeline for one run item |
+| `POST /api/autopilot/policies/:id/authorize` | `{runId, selections}`; mandate decision on server-held results; never buys |
+| `GET /api/autopilot/policies/:id/runs` | Recent runs with audit events |
+| `POST /api/autopilot/run-due` | Evaluate this session's due policies once per slot |
+| `POST /api/autopilot/demo` | Development/test only: café DEMO autopilot |
+| `POST /api/voice/interpret` | `{transcript, timezone?}`; text only, returns a command, acts on nothing |
 
 There is no real-commerce dispatch route. Frontend `is_test` or merchant/amount overrides are rejected by input schemas. Server metadata is fetched again immediately before sandbox dispatch.
 
