@@ -57,4 +57,20 @@ describe("Dashboard: mode nav switches the active view", () => {
     expect(document.getElementById("request")).toBeTruthy();
     expect(document.getElementById("inspect-upload")).toBeNull();
   });
+
+  it("pauses decorative motion across mode changes without losing the request", () => {
+    render(<Dashboard />);
+    const input = screen.getByRole("textbox", { name: "What are you looking for?" });
+    fireEvent.change(input, { target: { value: "A monitor under C$200" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pause animations" }));
+    expect(document.querySelector(".app-shell")?.getAttribute("data-motion")).toBe("off");
+    fireEvent.click(within(modeNav()).getByRole("button", { name: "Inspect" }));
+    expect(screen.getByRole("button", { name: "Resume animations" })).toBeTruthy();
+    fireEvent.click(within(modeNav()).getByRole("button", { name: "Request" }));
+    expect((screen.getByRole("textbox", { name: "What are you looking for?" }) as HTMLTextAreaElement).value).toBe("A monitor under C$200");
+    fireEvent.click(screen.getByRole("button", { name: "Resume animations" }));
+    expect(document.querySelector(".app-shell")?.getAttribute("data-motion")).toBe("on");
+    expect(vi.mocked(fetch).mock.calls.every(([url]) => url === "/api/status")).toBe(true);
+  });
+
 });

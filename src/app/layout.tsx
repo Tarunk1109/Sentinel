@@ -7,6 +7,7 @@ import "@/components/sentinel/input-surfaces.css";
 import "@/components/sentinel/mode-art.css";
 import "@/components/sentinel/quick-start.css";
 import "./atelier.css";
+import "@/components/sentinel/intelligence-visual.css";
 
 export const metadata: Metadata = {
   title: "SENTINEL — Autonomous Commerce",

@@ -1,15 +1,16 @@
 import { ArrowRight, Check, Layers3, ScanLine, Search, ShieldCheck } from "lucide-react";
 import type { Mode } from "@/lib/domain/types";
 import { ModeArt } from "./mode-art";
+import { IntelligenceVisual } from "./intelligence-visual";
 
 export function WelcomeHero() {
   return <section className="welcome-hero" aria-labelledby="hero-title">
     <div className="welcome-copy">
-      <div className="eyebrow"><span className="eyebrow-line" />INTELLIGENT COMMERCE</div>
-      <h1 id="hero-title">Better choices.<br /><span>Less busywork.</span></h1>
-      <p>Find the right product, replace what’s missing, or bring an idea to life. One workspace to move from a need to an informed decision.</p>
+      <div className="eyebrow"><span className="eyebrow-line" />A LITTLE INTELLIGENCE. A LOT OF POSSIBILITY.</div>
+      <h1 id="hero-title">Big ideas.<br /><span>Brilliant finds.</span></h1>
+      <p>Describe it. Show it. Dream it. Your AI shopping partner turns what you have in mind into a clear next step.</p>
       <div className="welcome-promise"><span><Check size={14} />Your requirements</span><span><Check size={14} />Real options</span><span><Check size={14} />Your approval</span></div>
-      <div className="welcome-caption"><span>01 — 03</span><span>Three ways to start. One clear next step.</span></div>
+      <IntelligenceVisual />
     </div>
   </section>;
 }

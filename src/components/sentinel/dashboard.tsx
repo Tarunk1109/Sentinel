@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleHelp, CircleDot, Hexagon, LockKeyhole, Plus, ShieldCheck, ShoppingBag, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleHelp, CircleDot, Hexagon, LockKeyhole, Pause, Play, Plus, ShieldCheck, ShoppingBag, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { QuickStart } from "./quick-start";
@@ -26,6 +26,7 @@ function SentinelMark({ small = false }: { small?: boolean }) {
 const modeNoun: Record<Mode, string> = { request: "request", inspect: "inspection", build: "build" };
 
 export function Dashboard() {
+  const [motionEnabled, setMotionEnabled] = useState(true);
   const [view, setView] = useState<Mode>("request");
   const [inspectKey, setInspectKey] = useState(0);
   const [buildKey, setBuildKey] = useState(0);
@@ -66,7 +67,7 @@ export function Dashboard() {
   const credentialLabel = "System status";
   const hasWorkspace = Boolean(mission || isRunning || steps.length);
 
-  return <div className={`app-shell view-${view}`}>
+  return <div className={`app-shell view-${view}`} data-motion={motionEnabled ? "on" : "off"}>
     <a className="skip-link" href="#main">Skip to main content</a>
     <aside className="workspace-sidebar" aria-label="Workspace navigation">
       <a href="#main" className="brand" aria-label="SENTINEL home"><SentinelMark /><span>SENTINEL</span><span className="brand-beta">BETA</span></a>
@@ -82,7 +83,7 @@ export function Dashboard() {
     <div className="workspace-shell">
     <header className="site-header"><div className="header-inner">
       <div className="header-breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>{view === "request" ? "Overview" : view === "inspect" ? "Inspect" : "Build"}</strong></div>
-      <div className="header-actions"><QuickStart disabled={isRunning} onChooseMode={chooseMode} onUseExample={example => { chooseMode("request"); setPrompt(example); requestAnimationFrame(focusRequest); }} /><span className="header-divider" /><button aria-label="Integration status" className={`connection-button ${mission ? "connected" : ""}`} onClick={() => setInfo("system")}><span className="connection-dot" /><span>{credentialLabel}</span><ArrowUpRight size={13} /></button><Button variant="ghost" size="icon" className="help-button" onClick={() => setInfo("guide")} aria-label="Open quick guide"><CircleHelp size={18} /></Button></div>
+      <div className="header-actions"><QuickStart disabled={isRunning} onChooseMode={chooseMode} onUseExample={example => { chooseMode("request"); setPrompt(example); requestAnimationFrame(focusRequest); }} /><button type="button" className="motion-toggle" onClick={() => setMotionEnabled(value => !value)} aria-label={motionEnabled ? "Pause animations" : "Resume animations"} title={motionEnabled ? "Pause decorative animations" : "Resume decorative animations"}>{motionEnabled ? <Pause size={14} /> : <Play size={14} />}</button><span className="header-divider" /><button aria-label="Integration status" className={`connection-button ${mission ? "connected" : ""}`} onClick={() => setInfo("system")}><span className="connection-dot" /><span>{credentialLabel}</span><ArrowUpRight size={13} /></button><Button variant="ghost" size="icon" className="help-button" onClick={() => setInfo("guide")} aria-label="Open quick guide"><CircleHelp size={18} /></Button></div>
     </div></header>
     <div className="test-banner"><div><span className="test-badge"><ShieldCheck size={13} />PREVIEW WORKSPACE</span><span className="banner-separator">·</span><span>Explore with confidence. Real purchases are disabled.</span></div><button onClick={() => setInfo("system")}>About this preview<ArrowUpRight size={12} /></button></div>
     <main id="main" tabIndex={-1} className="main-content"><div className="studio-wayfinding"><span><span className="workspace-indicator" />{view === "request" ? "YOUR COMMERCE WORKSPACE" : view === "inspect" ? "VISUAL INSPECTION" : "PROJECT PLANNING"}</span><span className="studio-edition">Canada <span>·</span> CAD</span></div>
