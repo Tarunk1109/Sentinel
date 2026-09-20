@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, FlaskConical, LoaderCircle, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/use-checkout";
-import type { SandboxInfo } from "@/lib/domain/checkout";
+import type { CheckoutSession, SandboxInfo } from "@/lib/domain/checkout";
+import { VERIFIED_SANDBOX_ORDER_ID } from "@/lib/domain/sandbox";
 import type { ActivityStep, ProductCandidate } from "@/lib/domain/commerce";
 import { displayPrice } from "./commerce-display";
 import { CheckoutReview } from "./approval-panel";
@@ -16,6 +17,31 @@ function SandboxCheckout({ product, onStep }: { product: ProductCandidate; onSte
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void state.autoQuote(); }, []);
   return <CheckoutReview product={product} quantity={1} state={state} />;
+}
+
+function VerifiedSandboxOrder({ product }: { product: ProductCandidate }) {
+  const [checkout, setCheckout] = useState<CheckoutSession | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/sandbox/order-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ productId: product.id, orderId: VERIFIED_SANDBOX_ORDER_ID }),
+      signal: controller.signal,
+      cache: "no-store",
+    }).then(async response => {
+      const value = await response.json().catch(() => null) as { checkout?: CheckoutSession } | null;
+      if (response.ok && value?.checkout?.stage === "succeeded") setCheckout(value.checkout);
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [product.id]);
+
+  if (!checkout?.order?.chargedAmount) return null;
+  return <div className="rounded-xl border border-success/25 bg-success/5 p-4 text-sm text-success" role="status">
+    <p className="font-semibold">Verified sandbox purchase completed</p>
+    <p className="mt-1 leading-relaxed">Agnic confirms the SENTINEL demo order succeeded: {displayPrice(checkout.order.chargedAmount)} test charge. No real money moved and no real goods will ship.</p>
+  </div>;
 }
 
 export function SandboxPanel({ onStep }: { onStep: (step: ActivityStep) => void }) {
@@ -53,7 +79,7 @@ export function SandboxPanel({ onStep }: { onStep: (step: ActivityStep) => void 
       {sandbox && <div role="status" className={`rounded-lg border p-4 text-sm leading-relaxed ${sandbox.blocked ? "border-warning/25 bg-warning/5 text-warning" : "border-success/20 bg-success/5 text-success"}`}><p className="font-semibold">{sandbox.blocked ? "Sandbox checkout blocked" : `${sandbox.merchant.name} · Sandbox identity verified`}</p><p className="mt-1">{sandbox.message}</p></div>}
       {sandbox && !sandbox.blocked && !selected && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{sandbox.products.map(product => <button type="button" key={product.id} className="rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50" disabled={product.availability === "unavailable"} onClick={() => setSelected(product)}><span className="text-xs font-medium text-primary">TEST PRODUCT</span><span className="mt-2 block text-sm font-semibold leading-relaxed">{product.name}</span><span className="mt-3 flex items-center justify-between gap-3 text-sm"><span>{displayPrice(product.price)}</span><span className="text-primary">Select →</span></span></button>)}</div>}
       {sandbox && !sandbox.blocked && !sandbox.products.length && <p className="text-sm text-muted-foreground">The verified test store returned no available products. Refresh the store later.</p>}
-      {selected && <SandboxCheckout key={selected.id} product={selected} onStep={onStep} />}
+      {selected && <><VerifiedSandboxOrder product={selected} /><SandboxCheckout key={selected.id} product={selected} onStep={onStep} /></>}
     </div>
   </div>;
 }
