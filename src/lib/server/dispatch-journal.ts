@@ -1,6 +1,7 @@
 import 'server-only';
 import { mkdir, open, readFile, readdir, rename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { ProviderError } from './provider-error';
 import { AUTHORIZED_RETRY_ORDER_ID, type ProviderOrder, type SandboxPaymentReadiness } from '@/lib/domain/checkout';
@@ -9,7 +10,10 @@ interface JournalRecord { orderId?: string | null; status?: string; recordedAt?:
 
 /** Durable once-only marker. Unknown outcomes remain claimed across restarts. */
 export class DispatchJournal {
-  constructor(private readonly directory = join(process.cwd(), '.sentinel', 'sandbox-attempts')) {}
+  // Vercel deploys application files as read-only. Runtime dispatch markers must
+  // live in its writable temporary directory; local development keeps the
+  // durable project journal for inspection and tests.
+  constructor(private readonly directory = process.env.VERCEL ? join(tmpdir(), 'sentinel-sandbox-attempts') : join(process.cwd(), '.sentinel', 'sandbox-attempts')) {}
   private path(id: string): string {
     if (!/^[0-9a-f-]{36}$/.test(id)) throw new ProviderError('INVALID_CHECKOUT', 'Invalid checkout identifier.', 400);
     return join(this.directory, `${id}.json`);
