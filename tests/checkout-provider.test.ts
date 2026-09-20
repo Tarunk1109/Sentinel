@@ -140,6 +140,14 @@ describe('fulfillment and checkout pricing', () => {
     const { provider } = setup({ ...quote, expected_amount_minor: 20800 });
     expect(await provider.previewOrder(product, intent, context())).toMatchObject({ status: 'needs-setup', amount: null, budgetViolation: { limit: { amountMinor: 20000, currency: 'CAD' }, checkout: { amountMinor: 20800, currency: 'CAD' } } });
   });
+  it('allows a C$14.95 sandbox checkout under the C$20 cap and blocks amounts above it', async () => {
+    const sandboxIntent = { ...intent, budget: { maxAmount: 20, currency: 'CAD' as const } };
+    const allowed = setup({ ...quote, expected_amount_minor: 1495 });
+    expect(await allowed.provider.previewOrder(product, sandboxIntent, context())).toMatchObject({ status: 'quoted', amount: { amountMinor: 1495, currency: 'CAD' } });
+    expect(JSON.parse(String(allowed.network.mock.calls[0][1]?.body))).toMatchObject({ constraints: { max_total_minor: 2000 } });
+    const blocked = setup({ ...quote, expected_amount_minor: 2001 });
+    expect(await blocked.provider.previewOrder(product, sandboxIntent, context())).toMatchObject({ status: 'needs-setup', amount: null, budgetViolation: { limit: { amountMinor: 2000, currency: 'CAD' }, checkout: { amountMinor: 2001, currency: 'CAD' } } });
+  });
   it('handles a provider constraint rejection without changing the original cap', async () => {
     const { provider } = setup({ error: 'constraint_total_exceeded', expected_amount_minor: 20800, private: 'private payment details' }, 409);
     const result = await provider.previewOrder(product, intent, context());

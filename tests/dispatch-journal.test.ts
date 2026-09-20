@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 vi.mock('server-only', () => ({}));
 import { DispatchJournal } from '@/lib/server/dispatch-journal';
+import { AUTHORIZED_RETRY_ORDER_ID, type ProviderOrder } from '@/lib/domain/checkout';
 
 const id = 'd16a7a6c-715a-4570-b77e-91e48988bc69';
 const directories: string[] = [];
@@ -48,5 +49,56 @@ describe('durable dispatch journal', () => {
   it('rejects a path injection identifier before creating a claim', async () => {
     const { journal } = await setup();
     await expect(journal.claim('../outside')).rejects.toMatchObject({ code: 'INVALID_CHECKOUT' });
+  });
+});
+
+describe('provider-authorized retry journal', () => {
+  const payment = { aliasFound: true, brand: 'visa', lastFour: '4242' };
+  const failed: ProviderOrder = {
+    id: AUTHORIZED_RETRY_ORDER_ID,
+    merchantId: 'merchant_untitled_fidget_shop',
+    status: 'worker_error',
+    approvedAmount: { amountMinor: 1495, currency: 'CAD' },
+    chargedAmount: null,
+    orderUrl: null,
+    timestamp: null,
+    test: false,
+    retryable: null,
+    retryAction: 'contact_support',
+    errorCode: 'CHECKOUT_INCOMPLETE',
+    chargeState: 'attempted',
+    billingMode: 'cardholder',
+  };
+  async function authorizedSetup() {
+    const result = await setup();
+    await result.journal.claim(id);
+    await result.journal.record(id, AUTHORIZED_RETRY_ORDER_ID, 'worker_error');
+    return result;
+  }
+
+  it('allows the exact provider-authorized failed order once and preserves its original record', async () => {
+    const { directory, journal } = await authorizedSetup();
+    const originalBefore = await readFile(join(directory, `${id}.json`), 'utf8');
+    await journal.claimAuthorizedRetry(failed, true, payment);
+    await expect(journal.claimAuthorizedRetry(failed, true, payment)).rejects.toMatchObject({ code: 'AUTHORIZED_RETRY_ALREADY_ATTEMPTED' });
+    expect(await readFile(join(directory, `${id}.json`), 'utf8')).toBe(originalBefore);
+  });
+
+  it.each([
+    [{ ...failed, status: 'succeeded' }, 'successful'],
+    [{ ...failed, chargedAmount: { amountMinor: 1, currency: 'CAD' as const }, chargeState: 'confirmed' as const }, 'charged'],
+  ])('blocks a %s previous order', async (previous) => {
+    const { journal } = await authorizedSetup();
+    await expect(journal.claimAuthorizedRetry(previous, true, payment)).rejects.toMatchObject({ code: 'AUTHORIZED_RETRY_STATE_INVALID' });
+  });
+
+  it('blocks every other previous order ID', async () => {
+    const { journal } = await authorizedSetup();
+    await expect(journal.claimAuthorizedRetry({ ...failed, id: 'af_ord_wrong' }, true, payment)).rejects.toMatchObject({ code: 'AUTHORIZED_RETRY_STATE_INVALID' });
+  });
+
+  it('keeps ordinary duplicate protection unchanged', async () => {
+    const { journal } = await authorizedSetup();
+    await expect(journal.claim(id)).rejects.toMatchObject({ code: 'DISPATCH_ALREADY_ATTEMPTED' });
   });
 });

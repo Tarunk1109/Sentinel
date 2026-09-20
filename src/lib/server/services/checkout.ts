@@ -1,7 +1,7 @@
 import 'server-only';
 import { isSandboxMerchant, isOfficialShopifySandbox } from '@/lib/domain/sandbox';
 import { createHash, randomUUID } from 'node:crypto';
-import type { CheckoutSession, Merchant, SandboxConsent, SandboxInfo } from '@/lib/domain/checkout';
+import { AUTHORIZED_RETRY_ORDER_ID, type AuthorizedRetryConsent, type CheckoutSession, type Merchant, type SandboxConsent, type SandboxInfo } from '@/lib/domain/checkout';
 import type { ProductCandidate, ProductIntent, SafePreview } from '@/lib/domain/commerce';
 import type { CallContext, CheckoutProvider } from './live-contracts';
 import { assertSandboxMerchant, getTestCardAlias } from '../safety';
@@ -10,7 +10,7 @@ import { DispatchJournal } from '../dispatch-journal';
 
 const context = (signal: AbortSignal): CallContext => ({ signal, usage: { modelCalls: 0, agnicCalls: 0, inputTokens: 0, outputTokens: 0 } });
 type Selection = { product: ProductCandidate; intent: ProductIntent };
-type Entry = { owner: string; state: CheckoutSession; intent: ProductIntent; expires: number; exploreAttempted: boolean; exploreId: string | null; started: number; lastPoll: number; dispatched: boolean; dispatchAttemptId: string | null; fulfillmentId?: string };
+type Entry = { owner: string; state: CheckoutSession; intent: ProductIntent; expires: number; exploreAttempted: boolean; exploreId: string | null; started: number; lastPoll: number; dispatched: boolean; dispatchAttemptId: string | null; fulfillmentId?: string; retryOfOrderId?: string };
 function sandboxAttemptId(owner: string, merchantId: string, sku: string): string {
   // Keep the durable claim stable across checkout expiry and process restarts, without exposing the owner.
   const hash = createHash('sha256').update(JSON.stringify(['sandbox-dispatch-v1', owner, merchantId, sku])).digest('hex').slice(0, 32);
@@ -31,7 +31,7 @@ export class CheckoutService {
   private selections = new Map<string, string>();
   private jobs = new Map<string, Promise<CheckoutSession>>();
   private sandbox: { value: SandboxInfo; expires: number } | null = null;
-  constructor(private readonly provider: CheckoutProvider, private readonly select: (owner: string, missionId: string, productId: string) => Selection, private readonly journal: Pick<DispatchJournal, 'claim' | 'record'> = new DispatchJournal()) {}
+  constructor(private readonly provider: CheckoutProvider, private readonly select: (owner: string, missionId: string, productId: string) => Selection, private readonly journal: Pick<DispatchJournal, 'claim' | 'record' | 'verifyAuthorizedRetry' | 'claimAuthorizedRetry' | 'recordAuthorizedRetry'> = new DispatchJournal()) {}
   private entry(owner: string, id: string): Entry {
     const e = this.entries.get(id);
     if (!e || e.owner !== owner || e.expires < Date.now()) throw new ProviderError('CHECKOUT_EXPIRED', 'This checkout session expired or belongs to another session. Start from the product selection. Never repeat an existing order.', 409);
@@ -41,7 +41,7 @@ export class CheckoutService {
   private create(owner: string, selection: Selection, sandbox = false): CheckoutSession {
     for (const [id,e] of this.entries) if (e.expires < Date.now()) this.entries.delete(id);
     if (this.entries.size >= 80) throw new ProviderError('CHECKOUT_BUSY', 'Too many active checkout sessions. Finish an existing session first.', 429);
-    const state: CheckoutSession = { id: randomUUID(), mode: sandbox ? 'SANDBOX_COMMERCE_MODE' : 'REAL_COMMERCE_MODE', product: selection.product, quantity: selection.intent.quantity, stage: 'selected', message: 'Review your selection. Merchant preparation and price checks do not purchase anything.', merchant: null, preview: null, quoteId: null, quoteExpiresAt: null, order: null, approvedAt: null, canConfirm: false, setup: setup() };
+    const state: CheckoutSession = { id: randomUUID(), mode: sandbox ? 'SANDBOX_COMMERCE_MODE' : 'REAL_COMMERCE_MODE', product: selection.product, quantity: selection.intent.quantity, stage: 'selected', message: 'Review your selection. Merchant preparation and price checks do not purchase anything.', merchant: null, preview: null, quoteId: null, quoteExpiresAt: null, order: null, approvedAt: null, retryOfOrderId: null, canConfirm: false, setup: setup() };
     this.entries.set(state.id, { owner, state, intent: selection.intent, expires: Date.now() + 30 * 60_000, exploreAttempted: false, exploreId: null, started: 0, lastPoll: 0, dispatched: false, dispatchAttemptId: null }); return structuredClone(state);
   }
   begin(owner: string, missionId: string, productId: string): CheckoutSession {
@@ -63,11 +63,39 @@ export class CheckoutService {
     assertSandboxMerchant(catalog.merchant);
     const product = catalog.products.find(p => p.id === productId);
     if (!product || product.availability !== 'available' || catalog.blocked) throw new ProviderError('SANDBOX_PRODUCT_UNAVAILABLE', 'Select an available product from the server-verified test catalogue.', 409);
-    const intent: ProductIntent = { originalRequest: `Test checkout: ${product.name}`, searchQuery: 'official test item', productType: 'test item', quantity: 1, budget: { maxAmount: 10, currency: 'CAD' }, country: 'CA', requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
+    const intent: ProductIntent = { originalRequest: `Test checkout: ${product.name}`, searchQuery: 'official test item', productType: 'test item', quantity: 1, budget: { maxAmount: 20, currency: 'CAD' }, country: 'CA', requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
     const key = `${owner}:sandbox:${productId}`;
     const prior = this.selections.get(key);
     if (prior && this.entries.get(prior) && this.entries.get(prior)!.expires > Date.now()) return this.view(this.entry(owner, prior));
     const state = this.create(owner, { product, intent }, true); this.selections.set(key, state.id); return state;
+  }
+  private billingProfileVerified(): boolean {
+    return process.env.SENTINEL_AGNIC_AUTHORIZED_RETRY_ORDER_ID === AUTHORIZED_RETRY_ORDER_ID && process.env.SENTINEL_AGNIC_BILLING_PROFILE_CONFIRMED === 'true';
+  }
+  private async verifiedRetry(signal: AbortSignal) {
+    if (!this.billingProfileVerified()) throw new ProviderError('AUTHORIZED_RETRY_NOT_CONFIGURED', 'The exact provider authorization and billing-profile confirmation are not configured. Retry remains blocked.', 403);
+    const [previous, payment] = await Promise.all([
+      this.provider.getOrder(AUTHORIZED_RETRY_ORDER_ID, context(signal)),
+      this.provider.getSandboxPaymentReadiness(context(signal)),
+    ]);
+    await this.journal.verifyAuthorizedRetry(previous, true, payment);
+    return { previous, payment };
+  }
+  async beginAuthorizedRetry(owner: string, previousOrderId: string, signal: AbortSignal): Promise<CheckoutSession> {
+    if (previousOrderId !== AUTHORIZED_RETRY_ORDER_ID) throw new ProviderError('AUTHORIZED_RETRY_FORBIDDEN', 'This order has no provider-authorized retry.', 403);
+    await this.verifiedRetry(signal);
+    const catalog = await this.sandboxCatalog(signal);
+    assertSandboxMerchant(catalog.merchant);
+    const sku = 'gid://shopify/ProductVariant/43945255567426';
+    const product = catalog.products.find(candidate => candidate.sku === sku);
+    if (!product || product.availability !== 'available' || catalog.blocked) throw new ProviderError('SANDBOX_PRODUCT_UNAVAILABLE', 'The provider-authorized retry product is not currently available.', 409);
+    const intent: ProductIntent = { originalRequest: `Provider-authorized sandbox retry of ${previousOrderId}: Paw Print Charm`, searchQuery: 'Paw Print Charm', productType: 'test item', quantity: 1, budget: { maxAmount: 14.95, currency: 'CAD' }, country: 'CA', requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
+    const state = this.create(owner, { product, intent }, true);
+    const entry = this.entry(owner, state.id);
+    entry.retryOfOrderId = previousOrderId;
+    entry.state.retryOfOrderId = previousOrderId;
+    entry.state.message = 'Agnic support-authorized retry prepared. Obtain and review a fresh Standard-delivery quote before the one allowed retry.';
+    return this.view(entry);
   }
   private async job(e: Entry, operation: () => Promise<void>): Promise<CheckoutSession> {
     const running = this.jobs.get(e.state.id); if (running) return running;
@@ -146,7 +174,8 @@ export class CheckoutService {
       else if (order.status === 'succeeded' || order.status === 'unknown') { e.state.stage = 'unknown'; e.state.message = 'The provider did not supply a verified test success. Inspect the existing order; no receipt was fabricated.'; }
       else if (terminalMessages[order.status]) { e.state.stage = 'failed'; e.state.message = ['payment_declined', 'card_declined', 'test_card_declined'].includes(order.errorCode ?? '') ? 'The test payment was declined. Check the configured test card in Agnic; this order will not be dispatched again.' : terminalMessages[order.status]; }
       else if (order.status === 'approval_required') { e.state.stage = 'blocked'; e.state.message = 'Agnic requires hosted setup or approval. Inspect the existing order; do not dispatch again.'; }
-      await this.journal.record(e.dispatchAttemptId!,order.id,order.status);
+      if (e.retryOfOrderId) await this.journal.recordAuthorizedRetry(e.retryOfOrderId,order.id,order.status);
+      else await this.journal.record(e.dispatchAttemptId!,order.id,order.status);
     });
   }
   async confirm(owner: string, input: SandboxConsent, signal: AbortSignal): Promise<CheckoutSession> {
@@ -170,6 +199,32 @@ export class CheckoutService {
         e.state.order = order; e.state.stage = 'processing'; e.state.message = 'Test order dispatched once. Merchant checkout processing; only order status will be polled.';
         await this.journal.record(attemptId,order.id,order.status);
       } catch (error) { e.state.stage = 'unknown'; e.state.message = publicError(error).message + ' This dispatch attempt is saved and cannot be repeated.'; await this.journal.record(attemptId,e.state.order?.id ?? null,'unknown'); }
+    });
+  }
+  async confirmAuthorizedRetry(owner: string, input: AuthorizedRetryConsent, signal: AbortSignal): Promise<CheckoutSession> {
+    const e = this.entry(owner, input.checkoutId);
+    if (e.retryOfOrderId !== AUTHORIZED_RETRY_ORDER_ID || input.previousOrderId !== e.retryOfOrderId) throw new ProviderError('AUTHORIZED_RETRY_FORBIDDEN', 'This checkout is not the exact provider-authorized retry.', 403);
+    if (e.dispatched) return this.view(e);
+    return this.job(e, async () => {
+      if (input.confirmed !== true || input.confirmationText !== 'Confirm Provider-Authorized Test Retry' || input.quoteId !== e.state.quoteId || !e.state.quoteExpiresAt || Date.parse(e.state.quoteExpiresAt) <= Date.now() || e.state.stage !== 'quoted') throw new ProviderError('CONSENT_INVALID', 'Confirm the fresh provider-authorized test quote before proceeding.', 409);
+      const merchant = await this.merchantReady(e, signal); assertSandboxMerchant(merchant);
+      const { previous, payment } = await this.verifiedRetry(signal);
+      const approved = e.state.preview;
+      const fresh = await this.provider.previewOrder(e.state.product, e.intent, context(signal), e.fulfillmentId);
+      const standard = fresh.fulfillmentOptions?.find(option => option.id === fresh.selectedFulfillmentId);
+      if (!this.sameQuote(approved, fresh) || !fresh.amount || fresh.amount.currency !== 'CAD' || fresh.amount.amountMinor > 1495 || standard?.title !== 'Standard') {
+        e.state.preview = fresh; e.state.quoteId = null; e.state.quoteExpiresAt = null; e.state.canConfirm = false; e.state.stage = 'blocked'; e.state.message = 'The fresh Standard-delivery quote changed or exceeds C$14.95. The retry was not claimed or dispatched.'; return;
+      }
+      await this.journal.claimAuthorizedRetry(previous, true, payment);
+      e.dispatchAttemptId = `provider-authorized-retry-${previous.id}`; e.dispatched = true; e.state.canConfirm = false; e.state.stage = 'dispatching'; e.state.approvedAt = new Date().toISOString(); e.started = Date.now();
+      try {
+        const order = await this.provider.dispatchSandbox({ merchantId: merchant.id, sku: e.state.product.sku, quantity: 1, amount: fresh.amount, maxTotalMinor: 1495, fulfillmentId: e.fulfillmentId, approvedAt: e.state.approvedAt, confirmationText: 'Confirm Test Purchase', originalRequest: e.intent.originalRequest }, context(signal));
+        e.state.order = order; e.state.stage = 'processing'; e.state.message = 'The single provider-authorized sandbox retry was dispatched. Only this new order status may now be polled.';
+        await this.journal.recordAuthorizedRetry(previous.id, order.id, order.status);
+      } catch (error) {
+        e.state.stage = 'unknown'; e.state.message = publicError(error).message + ' The provider-authorized retry is permanently consumed and cannot run again.';
+        await this.journal.recordAuthorizedRetry(previous.id, e.state.order?.id ?? null, 'unknown');
+      }
     });
   }
   private sameQuote(a: SafePreview | null, b: SafePreview): boolean {

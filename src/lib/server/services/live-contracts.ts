@@ -1,6 +1,6 @@
 import "server-only";
 import type { CandidateEvaluation, ProductCandidate, ProductIntent, SafePreview, UsageCounts } from "@/lib/domain/commerce";
-import type { ExploreResult, Merchant, ProviderOrder, SandboxDispatch } from '@/lib/domain/checkout';
+import type { ExploreResult, Merchant, ProviderOrder, SandboxDispatch, SandboxPaymentReadiness } from '@/lib/domain/checkout';
 import type { InspectionAnalysis } from "@/lib/domain/inspection";
 import type { BuildAnalysis } from "@/lib/domain/build";
 import type { ValidatedImage } from "../image-validation";
@@ -29,5 +29,6 @@ export interface CheckoutProvider extends CommerceProvider {
   explore(product: ProductCandidate, intent: ProductIntent, context: CallContext): Promise<ExploreResult>;
   resolveProduct(product: ProductCandidate, context: CallContext): Promise<ProductCandidate>;
   getOrder(id: string, context: CallContext): Promise<ProviderOrder>;
+  getSandboxPaymentReadiness(context: CallContext): Promise<SandboxPaymentReadiness>;
   dispatchSandbox(input: SandboxDispatch, context: CallContext): Promise<ProviderOrder>;
 }

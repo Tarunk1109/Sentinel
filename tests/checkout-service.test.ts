@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 import { CheckoutService } from '@/lib/server/services/checkout';
 import type { CheckoutProvider } from '@/lib/server/services/live-contracts';
-import type { CheckoutSession, Merchant, ProviderOrder, SandboxConsent } from '@/lib/domain/checkout';
+import { AUTHORIZED_RETRY_ORDER_ID, type CheckoutSession, type Merchant, type ProviderOrder, type SandboxConsent } from '@/lib/domain/checkout';
 import type { SafePreview } from '@/lib/domain/commerce';
 import { ProviderError } from '@/lib/server/provider-error';
 import { intent, product } from './fixtures';
@@ -13,9 +13,15 @@ const signal = () => new AbortController().signal;
 const merchant: Merchant = { id: product.merchantId!, name: 'Fixture test merchant', domain: 'example.com', rail: 'shopify', isTest: true, currency: 'CAD' };
 const testProduct = { ...product, price: { amountMinor: 100, currency: 'CAD' as const } };
 const preview: SafePreview = { source: 'agnic', status: 'quoted', productId: product.id, quantity: 1, browsePrice: testProduct.price, subtotal: testProduct.price, shipping: null, tax: null, amount: testProduct.price, amountIsFinal: true, priceChanged: false, requirements: [], message: 'Fixture test quote', quotedAt: '2026-09-17T10:00:00Z', requiresFulfillment: false, selectedFulfillmentId: null };
-const order: ProviderOrder = { id: 'order_fixture', merchantId: merchant.id, status: 'pending', approvedAmount: testProduct.price, chargedAmount: null, orderUrl: null, timestamp: null, test: true, retryAction: null, errorCode: null };
+const order: ProviderOrder = { id: 'order_fixture', merchantId: merchant.id, status: 'pending', approvedAmount: testProduct.price, chargedAmount: null, orderUrl: null, timestamp: null, test: true, retryable: null, retryAction: null, errorCode: null, chargeState: null, billingMode: null };
 function mockJournal() {
-  return { claim: vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined), record: vi.fn<(id: string, orderId: string | null, status: string) => Promise<void>>().mockResolvedValue(undefined) };
+  return {
+    claim: vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined),
+    record: vi.fn<(id: string, orderId: string | null, status: string) => Promise<void>>().mockResolvedValue(undefined),
+    verifyAuthorizedRetry: vi.fn().mockResolvedValue(undefined),
+    claimAuthorizedRetry: vi.fn().mockResolvedValue('original-attempt'),
+    recordAuthorizedRetry: vi.fn().mockResolvedValue(undefined),
+  };
 }
 function setup(selectionProduct = product, journal = mockJournal()) {
   const provider = {
@@ -27,6 +33,7 @@ function setup(selectionProduct = product, journal = mockJournal()) {
     explore: vi.fn<CheckoutProvider['explore']>().mockResolvedValue({ orderId: 'explore_fixture', merchantId: null, status: 'pending' }),
     resolveProduct: vi.fn<CheckoutProvider['resolveProduct']>().mockResolvedValue(product),
     getOrder: vi.fn<CheckoutProvider['getOrder']>().mockResolvedValue(order),
+    getSandboxPaymentReadiness: vi.fn<CheckoutProvider['getSandboxPaymentReadiness']>().mockResolvedValue({ aliasFound: true, brand: 'visa', lastFour: '4242' }),
     dispatchSandbox: vi.fn<CheckoutProvider['dispatchSandbox']>().mockResolvedValue(order),
   } satisfies CheckoutProvider;
   const select = vi.fn().mockReturnValue({ product: selectionProduct, intent });
@@ -141,6 +148,12 @@ describe('quote and consent enforcement', () => {
     const state = await service.beginSandbox(owner, testProduct.id, signal());
     await expect(service.quote(owner, state.id, signal(), 'invented-expensive-option')).rejects.toMatchObject({ code: 'FULFILLMENT_INVALID' });
     expect(provider.previewOrder).not.toHaveBeenCalled();
+  });
+  it('quotes sandbox checkouts against a C$20 total cap', async () => {
+    const { service, provider } = setup();
+    const state = await service.beginSandbox(owner, testProduct.id, signal());
+    await service.quote(owner, state.id, signal());
+    expect(provider.previewOrder.mock.calls[0][1].budget).toEqual({ maxAmount: 20, currency: 'CAD' });
   });
   it('cannot confirm until a complete fresh quote exists', async () => {
     const { service, provider } = setup();
@@ -306,5 +319,32 @@ describe('once-only dispatch and truthful order status', () => {
     await service.confirm(owner, consent(state), signal());
     provider.getOrder.mockResolvedValue({ ...order, merchantId: 'different_merchant', status: 'succeeded' });
     await expect(service.refresh(owner, state.id, signal())).rejects.toMatchObject({ code: 'ORDER_MERCHANT_MISMATCH' });
+  });
+});
+
+describe('provider-authorized retry service', () => {
+  it('re-verifies, re-quotes, claims, and dispatches the exact retry only once', async () => {
+    vi.stubEnv('SENTINEL_AGNIC_AUTHORIZED_RETRY_ORDER_ID', AUTHORIZED_RETRY_ORDER_ID);
+    vi.stubEnv('SENTINEL_AGNIC_BILLING_PROFILE_CONFIRMED', 'true');
+    const { service, provider, journal } = setup();
+    const retryProduct = { ...testProduct, id: 'paw-print-charm', sku: 'gid://shopify/ProductVariant/43945255567426' };
+    const failed = { ...order, id: AUTHORIZED_RETRY_ORDER_ID, status: 'worker_error', errorCode: 'CHECKOUT_INCOMPLETE', retryAction: 'contact_support', chargeState: 'attempted' as const, billingMode: 'cardholder' };
+    const fulfillment = { id: 'standard', type: 'shipping', title: 'Standard', description: 'Standard delivery', price: { amountMinor: 1395, currency: 'CAD' as const }, requiresAddress: true, eta: null };
+    const choose = { ...preview, productId: retryProduct.id, status: 'needs-setup' as const, amount: null, amountIsFinal: false, requiresFulfillment: true, fulfillmentOptions: [fulfillment], selectedFulfillmentId: null };
+    const standard = { ...preview, productId: retryProduct.id, amount: { amountMinor: 1495, currency: 'CAD' as const }, fulfillmentOptions: [fulfillment], selectedFulfillmentId: fulfillment.id };
+    provider.getOrder.mockResolvedValue(failed);
+    provider.getSandboxProducts.mockResolvedValue({ merchant, products: [retryProduct] });
+    provider.previewOrder.mockResolvedValueOnce(choose).mockResolvedValue(standard);
+
+    const started = await service.beginAuthorizedRetry(owner, AUTHORIZED_RETRY_ORDER_ID, signal());
+    const options = await service.quote(owner, started.id, signal());
+    const quotedRetry = await service.quote(owner, started.id, signal(), fulfillment.id);
+    expect(options.stage).toBe('fulfillment');
+    const input = { action: 'confirm' as const, checkoutId: started.id, quoteId: quotedRetry.quoteId!, previousOrderId: AUTHORIZED_RETRY_ORDER_ID, confirmed: true as const, confirmationText: 'Confirm Provider-Authorized Test Retry' as const };
+    await service.confirmAuthorizedRetry(owner, input, signal());
+    await service.confirmAuthorizedRetry(owner, input, signal());
+    expect(journal.claimAuthorizedRetry).toHaveBeenCalledTimes(1);
+    expect(provider.dispatchSandbox).toHaveBeenCalledTimes(1);
+    expect(provider.dispatchSandbox).toHaveBeenCalledWith(expect.objectContaining({ sku: retryProduct.sku, quantity: 1, maxTotalMinor: 1495, fulfillmentId: fulfillment.id }), expect.any(Object));
   });
 });

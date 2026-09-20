@@ -11,7 +11,8 @@ import type { CallContext, CheckoutProvider } from '../services/live-contracts';
 
 const identifier = z.string().min(1).max(160).regex(/^[a-zA-Z0-9_-]+$/);
 const merchantSchema = z.object({ id: identifier, name: z.string().max(1000), domain: z.string().max(1000), rail: z.string().max(100), is_test: z.boolean(), default_currency: z.string().max(10) });
-const orderSchema = z.object({ id: identifier.optional(), order_id: identifier.optional(), merchant_id: identifier.nullish(), status: z.string().max(100), amount_minor: z.number().int().nonnegative().nullish(), amount_charged_minor: z.number().int().nonnegative().nullish(), currency: z.string().nullish(), order_url: z.string().nullish(), created_at: z.string().nullish(), test: z.boolean().optional(), retry_action: z.string().nullish(), error_code: z.string().nullish() });
+const orderSchema = z.object({ id: identifier.optional(), order_id: identifier.optional(), merchant_id: identifier.nullish(), status: z.string().max(100), amount_minor: z.number().int().nonnegative().nullish(), amount_charged_minor: z.number().int().nonnegative().nullish(), currency: z.string().nullish(), order_url: z.string().nullish(), created_at: z.string().nullish(), test: z.boolean().optional(), retryable: z.boolean().nullable().optional(), retry_action: z.string().nullish(), error_code: z.string().nullish(), evidence: z.object({ charge_state: z.enum(['none', 'attempted', 'unknown', 'confirmed']).nullish(), billing_mode: z.string().max(100).nullish() }).passthrough().nullish() }).passthrough();
+const cardsSchema = z.object({ cards: z.array(z.object({ id: z.string().min(1).max(300), last_four: z.string().regex(/^\d{4}$/), brand: z.string().max(40) }).passthrough()).max(50) }).passthrough();
 const knownStatuses = new Set(['pending', 'dispatched', 'approval_required', 'succeeded', 'merchant_error', 'worker_error', 'price_changed', 'out_of_stock', 'payment_unconfirmed', 'payment_gate_hit', 'timeout', 'explored']);
 function money(amount: number | null | undefined, currency: string | null | undefined): Price | null { const c = currencySchema.safeParse(currency); return amount != null && c.success ? { amountMinor: amount, currency: c.data } : null; }
 function metadata(value: unknown): Merchant {
@@ -27,13 +28,13 @@ function normalizeOrder(raw: unknown, fallbackId?: string): ProviderOrder {
   const link = safePublicHttpsUrl(o.order_url);
   // Only Agnic's stable evidence surface is exposed, never live_view_url.
   const safeLink = link && new URL(link).hostname === 'app.agnic.ai' && !new URL(link).search ? link : null;
-  return { id: o.id ?? o.order_id ?? fallbackId!, merchantId: o.merchant_id ?? null, status: knownStatuses.has(o.status) ? o.status : 'unknown', approvedAmount: money(o.amount_minor, o.currency), chargedAmount: money(o.amount_charged_minor, o.currency), orderUrl: safeLink, timestamp: o.created_at && Number.isFinite(Date.parse(o.created_at)) ? new Date(o.created_at).toISOString() : null, test: o.test === true, retryAction: ['re_preview', 'poll', 'handoff', 'contact_support', 'none'].includes(o.retry_action ?? '') ? o.retry_action! : null, errorCode: o.error_code && /^[a-zA-Z0-9_]{1,100}$/.test(o.error_code) ? o.error_code : null };
+  return { id: o.id ?? o.order_id ?? fallbackId!, merchantId: o.merchant_id ?? null, status: knownStatuses.has(o.status) ? o.status : 'unknown', approvedAmount: money(o.amount_minor, o.currency), chargedAmount: money(o.amount_charged_minor, o.currency), orderUrl: safeLink, timestamp: o.created_at && Number.isFinite(Date.parse(o.created_at)) ? new Date(o.created_at).toISOString() : null, test: o.test === true, retryable: o.retryable ?? null, retryAction: ['re_preview', 'poll', 'handoff', 'contact_support', 'none'].includes(o.retry_action ?? '') ? o.retry_action! : null, errorCode: o.error_code && /^[a-zA-Z0-9_]{1,100}$/.test(o.error_code) ? o.error_code : null, chargeState: o.evidence?.charge_state ?? null, billingMode: o.evidence?.billing_mode ?? null };
 }
 
 export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProvider {
   constructor(private readonly checkoutFetch: typeof fetch = fetch) { super(checkoutFetch); }
   async #send(path: string, context: CallContext, body?: object, timeout = 15000): Promise<unknown> {
-    const allowedRead = /^\/api\/autofill\/(merchants|orders)\/[a-zA-Z0-9_-]{1,160}$/.test(path) || path.startsWith('/api/autofill/products/lookup?');
+    const allowedRead = /^\/api\/autofill\/(merchants|orders)\/[a-zA-Z0-9_-]{1,160}$/.test(path) || path === '/api/autofill/cards' || path.startsWith('/api/autofill/products/lookup?');
     const allowedWrite = path === '/api/autofill/explore' || path === '/api/autofill/dispatch';
     if (body ? !allowedWrite : !allowedRead) throw new ProviderError('OPERATION_DISABLED', 'This commerce operation is not enabled.', 403);
     const token = getAgnicToken();
@@ -104,6 +105,14 @@ export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProv
   async getOrder(id: string, context: CallContext): Promise<ProviderOrder> {
     if (!identifier.safeParse(id).success) throw new ProviderError('INVALID_ORDER', 'Invalid order identifier.', 400);
     return normalizeOrder(await this.#send(`/api/autofill/orders/${id}`, context), id);
+  }
+  async getSandboxPaymentReadiness(context: CallContext) {
+    const alias = getTestCardAlias();
+    if (!alias) return { aliasFound: false, brand: null, lastFour: null };
+    const parsed = cardsSchema.safeParse(await this.#send('/api/autofill/cards', context));
+    if (!parsed.success) throw new ProviderError('AGNIC_CARDS_INVALID', 'Agnic did not return verifiable test-card metadata. Retry remains blocked.');
+    const card = parsed.data.cards.find(candidate => candidate.id === alias);
+    return { aliasFound: Boolean(card), brand: card?.brand.toLowerCase() ?? null, lastFour: card?.last_four ?? null };
   }
   async dispatchSandbox(input: SandboxDispatch, context: CallContext): Promise<ProviderOrder> {
     // Independently re-fetch immediately before the only network execution path.
