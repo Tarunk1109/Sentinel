@@ -39,8 +39,8 @@ function VerifiedSandboxOrder({ product }: { product: ProductCandidate }) {
 
   if (!checkout?.order?.chargedAmount) return null;
   return <div className="rounded-xl border border-success/25 bg-success/5 p-4 text-sm text-success" role="status">
-    <p className="font-semibold">Verified sandbox purchase completed</p>
-    <p className="mt-1 leading-relaxed">Agnic confirms the SENTINEL demo order succeeded: {displayPrice(checkout.order.chargedAmount)} test charge. No real money moved and no real goods will ship.</p>
+    <p className="font-semibold">Previous verified sandbox transaction</p>
+    <p className="mt-1 leading-relaxed">Agnic confirms SENTINEL’s earlier demo order succeeded: {displayPrice(checkout.order.chargedAmount)} test charge. This is proof of the completed demo transaction; the checkout below is a new quote and has not been submitted.</p>
   </div>;
 }
 
