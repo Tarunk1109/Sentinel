@@ -1,6 +1,6 @@
 # Final submission checklist
 
-- [ ] Deployed production URL
+- [x] Deployed production URL: https://sentinel-taupe-two.vercel.app
 - [x] Repository URL: https://github.com/Tarunk1109/Sentinel
 - [ ] Final `main` commit recorded
 - [x] Tests, lint, TypeScript, and production build passing locally

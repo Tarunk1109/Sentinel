@@ -1,5 +1,7 @@
 # SENTINEL
 
+Production UI: https://sentinel-taupe-two.vercel.app
+
 SENTINEL turns a Request Mode prompt, an Inspect Mode photo of something broken, or a Build Mode reference photo of something to create, into real Agnic product discovery, an evidence-based shortlist, merchant preparation, and a safe checkout quote. The light dashboard shows actual server activity, fulfillment choices, budget blocks, and a separate sandbox checkout flow. See [PHASE4A_REPORT.md](PHASE4A_REPORT.md) (Inspect Mode) and [PHASE5_REPORT.md](PHASE5_REPORT.md) (Build Mode) for what changed in each phase.
 
 **Real purchase execution is unconditionally disabled.** The only dispatch implementation is a separate test flow requiring either a server-verified test merchant or Agnic's exact documented Shopify gateway sandbox identity, an explicitly configured test-card alias, a fresh quote, and the user's confirmation.
