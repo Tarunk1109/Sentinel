@@ -4,8 +4,8 @@
 - [x] Repository URL: https://github.com/Tarunk1109/Sentinel
 - [ ] Final `main` commit recorded
 - [x] Tests, lint, TypeScript, and production build passing locally
-- [ ] Agnic sandbox transaction verified
-- [ ] Order proof captured
+- [x] Agnic sandbox transaction verified — `af_ord_mu9stni0ls90uruo` succeeded; C$13.00 test charge
+- [x] Order proof captured — `.sentinel/final-successful-sandbox-order.json`
 - [ ] 3-minute video recorded
 - [ ] Deck is 6 slides or fewer
 - [ ] Team information complete

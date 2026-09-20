@@ -3,7 +3,7 @@
 ## Before recording
 
 - Open the validated production URL in Chrome and confirm Request, Inspect, Build, and Autopilot load.
-- Keep the saved Agnic proof page ready. Do not repeat the sandbox purchase for the video.
+- Keep the saved Agnic proof page ready: `.sentinel/final-successful-sandbox-order.json`. Do not repeat the sandbox purchase for the video.
 - Have one clear JPG/PNG/WEBP Inspect image ready. Autopilot data is runtime-only and may need recreating after a restart.
 
 ## 0:00–0:35 — Intent modes
@@ -16,4 +16,4 @@ Open Autopilot & Voice. Say or paste: “Keep Coke, Sprite and Fanta stocked eve
 
 ## 1:35–3:00 — Agnic commerce proof
 
-Open Checkout & sandbox preview. Explain that the C$1 Hex Token is currently unavailable, so the official Paw Print Charm backup was used. Show the genuine saved quote, explicit consent, order ID, provider timestamp/status, and Agnic evidence link from the completed sandbox transaction. State that Shopify Payments was in test mode, no money moved, no goods ship, and real-money execution remains compiled off.
+Open Checkout & sandbox preview. Explain that the C$1 Hex Token is currently unavailable, so the official Paw Print Charm backup was used. Show the genuine saved quote, explicit consent, completed Agnic order `af_ord_mu9stni0ls90uruo`, `succeeded` status, and C$13.00 actual test charge from the sanitized proof. State that Shopify Payments was in test mode, no real money moved, no goods ship, and real-money execution remains compiled off.
