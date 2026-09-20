@@ -72,6 +72,10 @@ export class CheckoutService {
   /** Runs the non-purchase sandbox setup in one invocation so serverless routing
    * cannot lose an in-memory checkout between prepare, fulfillment and quote. */
   async autoQuoteSandbox(owner: string, productId: string, signal: AbortSignal): Promise<CheckoutSession> {
+    // A hosted page may retain a cookie after a prior dispatch. A fresh preview
+    // must never inherit that attempted order, while the durable journal still
+    // blocks any duplicate dispatch at confirmation time.
+    this.selections.delete(`${owner}:sandbox:${productId}`);
     let state = await this.beginSandbox(owner, productId, signal);
     state = await this.prepare(owner, state.id, signal);
     if (state.stage === 'exploring') return state;
