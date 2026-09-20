@@ -85,6 +85,20 @@ export class CheckoutService {
     if (!standard) throw new ProviderError('STANDARD_FULFILLMENT_REQUIRED', 'The verified sandbox checkout did not return Standard delivery. No purchase was prepared.', 409);
     return this.quote(owner, state.id, signal, standard.id);
   }
+  async autoConfirmSandbox(owner: string, productId: string, signal: AbortSignal): Promise<CheckoutSession> {
+    const quoted = await this.autoQuoteSandbox(owner, productId, signal);
+    if (quoted.stage !== 'quoted' || !quoted.quoteId || !quoted.canConfirm) throw new ProviderError('CONSENT_INVALID', 'A fresh complete sandbox quote is required before confirmation.', 409);
+    return this.confirm(owner, { checkoutId: quoted.id, quoteId: quoted.quoteId, confirmed: true, confirmationText: 'Confirm Test Purchase' }, signal);
+  }
+  async sandboxOrderStatus(productId: string, orderId: string, signal: AbortSignal): Promise<CheckoutSession> {
+    const catalog = await this.sandboxCatalog(signal); assertSandboxMerchant(catalog.merchant);
+    const product = catalog.products.find(item => item.id === productId);
+    if (!product) throw new ProviderError('SANDBOX_PRODUCT_UNAVAILABLE', 'This sandbox product is no longer available.', 409);
+    const order = await this.provider.getOrder(orderId, context(signal));
+    const succeeded = order.status === 'succeeded' && (order.test || isOfficialShopifySandbox(catalog.merchant));
+    const stage: CheckoutSession['stage'] = succeeded ? 'succeeded' : ['pending', 'dispatched'].includes(order.status) ? 'processing' : terminalMessages[order.status] ? 'failed' : 'unknown';
+    return { id: randomUUID(), mode: 'SANDBOX_COMMERCE_MODE', product, quantity: 1, stage, message: succeeded ? 'Agnic confirms the test order succeeded. No real money moved and no real goods will ship.' : stage === 'processing' ? 'Test order is processing. SENTINEL is reading the existing Agnic order only.' : 'Agnic returned a non-successful status for the existing test order.', merchant: catalog.merchant, preview: null, quoteId: null, quoteExpiresAt: null, order, approvedAt: null, retryOfOrderId: null, canConfirm: false, setup: setup() };
+  }
   private billingProfileVerified(): boolean {
     return process.env.SENTINEL_AGNIC_AUTHORIZED_RETRY_ORDER_ID === AUTHORIZED_RETRY_ORDER_ID && process.env.SENTINEL_AGNIC_BILLING_PROFILE_CONFIRMED === 'true';
   }

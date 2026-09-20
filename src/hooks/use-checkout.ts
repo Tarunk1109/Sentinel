@@ -80,8 +80,12 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
       }
       if (action === "prepare") value = await call("/api/checkout/prepare", { checkoutId: value.id });
       if (action === "quote") value = await call("/api/checkout/quote", { checkoutId: value.id, ...(fulfillmentId ? { fulfillmentId } : {}) });
-      if (action === "confirm") value = await call("/api/sandbox/confirm", { checkoutId: value.id, quoteId: value.quoteId, confirmed: true, confirmationText: "Confirm Test Purchase" });
-      if (action === "status") value = await call(`/api/checkout/status?checkoutId=${encodeURIComponent(value.id)}`);
+      if (action === "confirm") value = selection.mode === "sandbox"
+        ? await call("/api/sandbox/auto-confirm", { productId: selection.productId, confirmed: true, confirmationText: "Confirm Test Purchase" })
+        : await call("/api/sandbox/confirm", { checkoutId: value.id, quoteId: value.quoteId, confirmed: true, confirmationText: "Confirm Test Purchase" });
+      if (action === "status") value = selection.mode === "sandbox" && value.order
+        ? await call("/api/sandbox/order-status", { productId: selection.productId, orderId: value.order.id })
+        : await call(`/api/checkout/status?checkoutId=${encodeURIComponent(value.id)}`);
       if (controller.current !== request) return;
       accept(value);
       // Only these server-reported in-flight states permit polling.
@@ -93,7 +97,9 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
           request.signal.addEventListener("abort", aborted, { once: true });
           if (request.signal.aborted) aborted();
         });
-        value = await call(`/api/checkout/status?checkoutId=${encodeURIComponent(value.id)}`);
+        value = selection.mode === "sandbox" && value.order
+          ? await call("/api/sandbox/order-status", { productId: selection.productId, orderId: value.order.id })
+          : await call(`/api/checkout/status?checkoutId=${encodeURIComponent(value.id)}`);
         if (controller.current !== request) return;
         accept(value);
       }
