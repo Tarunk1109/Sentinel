@@ -157,11 +157,15 @@ describe('quote and consent enforcement', () => {
     await expect(service.quote(owner, state.id, signal(), 'invented-expensive-option')).rejects.toMatchObject({ code: 'FULFILLMENT_INVALID' });
     expect(provider.previewOrder).not.toHaveBeenCalled();
   });
-  it('quotes sandbox checkouts against a C$20 total cap', async () => {
+  it('quotes and dispatches sandbox checkouts against the authorized C$14.95 mandate cap', async () => {
     const { service, provider } = setup();
     const state = await service.beginSandbox(owner, testProduct.id, signal());
     await service.quote(owner, state.id, signal());
-    expect(provider.previewOrder.mock.calls[0][1].budget).toEqual({ maxAmount: 20, currency: 'CAD' });
+    expect(provider.previewOrder.mock.calls[0][1].budget).toEqual({ maxAmount: 14.95, currency: 'CAD' });
+    // The dispatch constraint must equal the mandate, or Agnic answers with a hosted-setup 202.
+    const quotedState = await quoted(service);
+    await service.confirm(owner, consent(quotedState), signal());
+    expect(provider.dispatchSandbox.mock.calls[0][0].maxTotalMinor).toBe(1495);
   });
   it('cannot confirm until a complete fresh quote exists', async () => {
     const { service, provider } = setup();

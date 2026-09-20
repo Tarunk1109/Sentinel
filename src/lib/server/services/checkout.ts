@@ -63,7 +63,9 @@ export class CheckoutService {
     assertSandboxMerchant(catalog.merchant);
     const product = catalog.products.find(p => p.id === productId);
     if (!product || product.availability !== 'available' || catalog.blocked) throw new ProviderError('SANDBOX_PRODUCT_UNAVAILABLE', 'Select an available product from the server-verified test catalogue.', 409);
-    const intent: ProductIntent = { originalRequest: `Test checkout: ${product.name}`, searchQuery: 'official test item', productType: 'test item', quantity: 1, budget: { maxAmount: 20, currency: 'CAD' }, country: 'CA', requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
+    // Agnic authorizes this sandbox mandate at exactly C$14.95. A wider cap reaches
+    // /dispatch as a non-matching constraint and is answered with hosted-setup 202.
+    const intent: ProductIntent = { originalRequest: `Test checkout: ${product.name}`, searchQuery: 'official test item', productType: 'test item', quantity: 1, budget: { maxAmount: 14.95, currency: 'CAD' }, country: 'CA', requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
     const key = `${owner}:sandbox:${productId}`;
     const prior = this.selections.get(key);
     if (prior && this.entries.get(prior) && this.entries.get(prior)!.expires > Date.now()) return this.view(this.entry(owner, prior));

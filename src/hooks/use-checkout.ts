@@ -84,8 +84,13 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
       if (action === "confirm") value = selection.mode === "sandbox"
         ? await call("/api/sandbox/auto-confirm", { productId: selection.productId, attemptId: sandboxAttemptId, confirmed: true, confirmationText: "Confirm Test Purchase" })
         : await call("/api/sandbox/confirm", { checkoutId: value.id, quoteId: value.quoteId, confirmed: true, confirmationText: "Confirm Test Purchase" });
-      if (action === "status") value = selection.mode === "sandbox" && value.order
-        ? await call("/api/sandbox/order-status", { productId: selection.productId, orderId: value.order.id })
+      // A sandbox attempt that never produced an order has nothing to look up, and its
+      // server session does not outlive a hosted instance. Re-quoting reads the current
+      // price without submitting anything.
+      if (action === "status") value = selection.mode === "sandbox"
+        ? value.order
+          ? await call("/api/sandbox/order-status", { productId: selection.productId, orderId: value.order.id })
+          : await call("/api/sandbox/auto-quote", { productId: selection.productId })
         : await call(`/api/checkout/status?checkoutId=${encodeURIComponent(value.id)}`);
       if (controller.current !== request) return;
       accept(value);
