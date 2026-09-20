@@ -73,8 +73,8 @@ export class CheckoutService {
    * cannot lose an in-memory checkout between prepare, fulfillment and quote. */
   async autoQuoteSandbox(owner: string, productId: string, signal: AbortSignal): Promise<CheckoutSession> {
     // A hosted page may retain a cookie after a prior dispatch. A fresh preview
-    // must never inherit that attempted order, while the durable journal still
-    // blocks any duplicate dispatch at confirmation time.
+    // must never inherit that attempted order. Its explicit confirmation gets
+    // a new dispatch token; the journal protects that token from retries.
     this.selections.delete(`${owner}:sandbox:${productId}`);
     let state = await this.beginSandbox(owner, productId, signal);
     state = await this.prepare(owner, state.id, signal);
@@ -85,10 +85,10 @@ export class CheckoutService {
     if (!standard) throw new ProviderError('STANDARD_FULFILLMENT_REQUIRED', 'The verified sandbox checkout did not return Standard delivery. No purchase was prepared.', 409);
     return this.quote(owner, state.id, signal, standard.id);
   }
-  async autoConfirmSandbox(owner: string, productId: string, signal: AbortSignal): Promise<CheckoutSession> {
+  async autoConfirmSandbox(owner: string, productId: string, attemptId: string, signal: AbortSignal): Promise<CheckoutSession> {
     const quoted = await this.autoQuoteSandbox(owner, productId, signal);
     if (quoted.stage !== 'quoted' || !quoted.quoteId || !quoted.canConfirm) throw new ProviderError('CONSENT_INVALID', 'A fresh complete sandbox quote is required before confirmation.', 409);
-    return this.confirm(owner, { checkoutId: quoted.id, quoteId: quoted.quoteId, confirmed: true, confirmationText: 'Confirm Test Purchase' }, signal);
+    return this.confirm(owner, { checkoutId: quoted.id, quoteId: quoted.quoteId, confirmed: true, confirmationText: 'Confirm Test Purchase' }, signal, attemptId);
   }
   async sandboxOrderStatus(productId: string, orderId: string, signal: AbortSignal): Promise<CheckoutSession> {
     const catalog = await this.sandboxCatalog(signal); assertSandboxMerchant(catalog.merchant);
@@ -208,7 +208,7 @@ export class CheckoutService {
       else await this.journal.record(e.dispatchAttemptId!,order.id,order.status);
     });
   }
-  async confirm(owner: string, input: SandboxConsent, signal: AbortSignal): Promise<CheckoutSession> {
+  async confirm(owner: string, input: SandboxConsent, signal: AbortSignal, confirmationAttemptId?: string): Promise<CheckoutSession> {
     const e = this.entry(owner,input.checkoutId);
     if (e.state.mode !== 'SANDBOX_COMMERCE_MODE') throw new ProviderError('REAL_PURCHASES_DISABLED', 'Real purchasing is disabled. This selection cannot be dispatched.', 403);
     if (e.dispatched) return this.view(e);
@@ -220,7 +220,9 @@ export class CheckoutService {
       const fresh = await this.provider.previewOrder(e.state.product,e.intent,context(signal),e.fulfillmentId);
       if (!this.sameQuote(approved,fresh)) { e.state.preview = fresh; e.state.quoteId = null; e.state.quoteExpiresAt = null; e.state.canConfirm = false; e.state.stage = 'blocked'; e.state.message = 'Quote changed since review. Check the updated price and obtain a new confirmation.'; return; }
       const amount = fresh.amount!;
-      const attemptId = sandboxAttemptId(e.owner,merchant.id,e.state.product.sku);
+      // Each explicit interactive consent receives one token. Reusing it is
+      // blocked durably; a later fresh quote and consent is a separate order.
+      const attemptId = confirmationAttemptId ?? sandboxAttemptId(e.owner,merchant.id,e.state.product.sku);
       await this.journal.claim(attemptId);
       // Mark once BEFORE any execution. Unknown outcomes may never be retried.
       e.dispatchAttemptId = attemptId; e.dispatched = true; e.state.canConfirm = false; e.state.stage = 'dispatching'; e.state.approvedAt = new Date().toISOString(); e.started = Date.now();

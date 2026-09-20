@@ -24,6 +24,7 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
   const controller = useRef<AbortController | null>(null);
   const stepCallback = useRef(onStep);
   const confirmationPending = useRef(false);
+  const [sandboxAttemptId] = useState<string | null>(() => selection.mode === "sandbox" ? crypto.randomUUID() : null);
   useEffect(() => { stepCallback.current = onStep; }, [onStep]);
   useEffect(() => () => { controller.current?.abort(); controller.current = null; }, []);
 
@@ -81,7 +82,7 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
       if (action === "prepare") value = await call("/api/checkout/prepare", { checkoutId: value.id });
       if (action === "quote") value = await call("/api/checkout/quote", { checkoutId: value.id, ...(fulfillmentId ? { fulfillmentId } : {}) });
       if (action === "confirm") value = selection.mode === "sandbox"
-        ? await call("/api/sandbox/auto-confirm", { productId: selection.productId, confirmed: true, confirmationText: "Confirm Test Purchase" })
+        ? await call("/api/sandbox/auto-confirm", { productId: selection.productId, attemptId: sandboxAttemptId, confirmed: true, confirmationText: "Confirm Test Purchase" })
         : await call("/api/sandbox/confirm", { checkoutId: value.id, quoteId: value.quoteId, confirmed: true, confirmationText: "Confirm Test Purchase" });
       if (action === "status") value = selection.mode === "sandbox" && value.order
         ? await call("/api/sandbox/order-status", { productId: selection.productId, orderId: value.order.id })

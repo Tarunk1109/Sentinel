@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, FlaskConical, LoaderCircle, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/use-checkout";
@@ -10,16 +10,20 @@ import type { ActivityStep, ProductCandidate } from "@/lib/domain/commerce";
 import { displayPrice } from "./commerce-display";
 import { CheckoutReview } from "./approval-panel";
 
-function SandboxCheckout({ product, onStep }: { product: ProductCandidate; onStep: (step: ActivityStep) => void }) {
+type SandboxHistoryItem = { id: string; productName: string; status: string; chargedAmount: ProductCandidate["price"]; updatedAt: string };
+const sandboxHistoryKey = "sentinel-sandbox-order-history";
+
+function SandboxCheckout({ product, onStep, onOrder }: { product: ProductCandidate; onStep: (step: ActivityStep) => void; onOrder: (checkout: CheckoutSession) => void }) {
   const state = useCheckout({ mode: "sandbox", productId: product.id }, onStep);
   // A selected product starts one non-purchase server workflow. This intentionally
   // runs only for the keyed product component, not on every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void state.autoQuote(); }, []);
+  useEffect(() => { if (state.checkout?.order) onOrder(state.checkout); }, [onOrder, state.checkout]);
   return <CheckoutReview product={product} quantity={1} state={state} />;
 }
 
-function VerifiedSandboxOrder({ product }: { product: ProductCandidate }) {
+function VerifiedSandboxOrder({ product, onOrder }: { product: ProductCandidate; onOrder: (checkout: CheckoutSession) => void }) {
   const [checkout, setCheckout] = useState<CheckoutSession | null>(null);
 
   useEffect(() => {
@@ -32,10 +36,10 @@ function VerifiedSandboxOrder({ product }: { product: ProductCandidate }) {
       cache: "no-store",
     }).then(async response => {
       const value = await response.json().catch(() => null) as { checkout?: CheckoutSession } | null;
-      if (response.ok && value?.checkout?.stage === "succeeded") setCheckout(value.checkout);
+      if (response.ok && value?.checkout?.stage === "succeeded") { setCheckout(value.checkout); onOrder(value.checkout); }
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [product.id]);
+  }, [onOrder, product.id]);
 
   if (!checkout?.order?.chargedAmount) return null;
   return <div className="rounded-xl border border-success/25 bg-success/5 p-4 text-sm text-success" role="status">
@@ -50,10 +54,26 @@ export function SandboxPanel({ onStep }: { onStep: (step: ActivityStep) => void 
   const [selected, setSelected] = useState<ProductCandidate | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<SandboxHistoryItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try { const saved = JSON.parse(localStorage.getItem(sandboxHistoryKey) ?? "[]"); return Array.isArray(saved) ? saved.slice(0, 10) : []; }
+    catch { return []; }
+  });
   const controller = useRef<AbortController | null>(null);
   const availableProducts = sandbox?.products.filter(product => product.availability === "available") ?? [];
   const unavailableCount = (sandbox?.products.length ?? 0) - availableProducts.length;
   useEffect(() => () => { controller.current?.abort(); controller.current = null; }, []);
+
+  const recordOrder = useCallback((checkout: CheckoutSession) => {
+    const order = checkout.order;
+    if (!order) return;
+    const item: SandboxHistoryItem = { id: order.id, productName: checkout.product.name, status: order.status, chargedAmount: order.chargedAmount, updatedAt: order.timestamp ?? new Date().toISOString() };
+    setHistory(current => {
+      const next = [item, ...current.filter(entry => entry.id !== item.id)].slice(0, 10);
+      localStorage.setItem(sandboxHistoryKey, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   async function loadCatalog() {
     if (controller.current) return;
@@ -81,7 +101,8 @@ export function SandboxPanel({ onStep }: { onStep: (step: ActivityStep) => void 
       {sandbox && <div role="status" className={`rounded-lg border p-4 text-sm leading-relaxed ${sandbox.blocked ? "border-warning/25 bg-warning/5 text-warning" : "border-success/20 bg-success/5 text-success"}`}><p className="font-semibold">{sandbox.blocked ? "Sandbox checkout blocked" : `${sandbox.merchant.name} · Sandbox identity verified`}</p><p className="mt-1">{sandbox.message}</p></div>}
       {sandbox && !sandbox.blocked && !selected && <><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{availableProducts.map(product => <button type="button" key={product.id} className="rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary focus-visible:outline-2 focus-visible:outline-primary" onClick={() => setSelected(product)}><span className="text-xs font-medium text-primary">AVAILABLE TEST PRODUCT</span><span className="mt-2 block text-sm font-semibold leading-relaxed">{product.name}</span><span className="mt-3 flex items-center justify-between gap-3 text-sm"><span>{displayPrice(product.price)}</span><span className="text-primary">Select →</span></span></button>)}</div>{unavailableCount > 0 && <p className="text-xs leading-relaxed text-muted-foreground">Agnic currently marks {unavailableCount} other official test variant as unavailable, so SENTINEL does not offer it for checkout.</p>}</>}
       {sandbox && !sandbox.blocked && !availableProducts.length && <p className="text-sm text-muted-foreground">The verified test store returned no available products. Refresh the store later.</p>}
-      {selected && <><VerifiedSandboxOrder product={selected} /><SandboxCheckout key={selected.id} product={selected} onStep={onStep} /></>}
+      {history.length > 0 && <section className="rounded-xl border border-border bg-card p-4" aria-labelledby="sandbox-history-title"><div className="flex items-center justify-between gap-3"><h3 id="sandbox-history-title" className="text-sm font-semibold">Sandbox order history</h3><span className="text-xs text-muted-foreground">This browser</span></div><ol className="mt-3 space-y-2">{history.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 text-sm"><span className="font-medium">{item.productName}</span><span className="text-muted-foreground">{item.status}{item.chargedAmount ? ` · ${displayPrice(item.chargedAmount)}` : ""}</span></li>)}</ol></section>}
+      {selected && <><VerifiedSandboxOrder product={selected} onOrder={recordOrder} /><SandboxCheckout key={selected.id} product={selected} onStep={onStep} onOrder={recordOrder} /></>}
     </div>
   </div>;
 }
