@@ -6,7 +6,7 @@ import { z } from "zod";
 import { currencySchema, type Price, type ProductCandidate, type ProductIntent, type SafePreview } from "@/lib/domain/commerce";
 import { getAgnicToken } from "@/lib/server/config";
 import { ProviderError } from "@/lib/server/provider-error";
-import { assertRealPurchasesEnabled } from "@/lib/server/safety";
+import { assertRealPurchasesEnabled, getSandboxShipTo } from "@/lib/server/safety";
 import type { CallContext, CommerceProvider } from "@/lib/server/services/live-contracts";
 
 // Verified against https://docs.agnic.ai/docs/api-reference/checkout.
@@ -168,9 +168,12 @@ export class AgnicProvider implements CommerceProvider {
     // The budget is for the whole request, not per item. Flooring never increases a cap.
     const maxTotalMinor = intent.budget.maxAmount === null ? undefined : Math.floor(Number((intent.budget.maxAmount * 100).toFixed(8)));
     let raw: unknown;
+    const isOfficialSandboxProduct = product.merchantId === 'merchant_untitled_fidget_shop' && product.merchantUrl && new URL(product.merchantUrl).hostname === 'untitled-fidget.shop';
+    const sandboxShipTo = isOfficialSandboxProduct ? getSandboxShipTo() : null;
     try { raw = await this.#request(QUOTE_PATH, context, undefined, {
       merchant_id: product.merchantId,
       items: [{ sku: product.sku, quantity: intent.quantity }],
+      ...(sandboxShipTo ? { ship_to: sandboxShipTo } : {}),
       ...(fulfillmentId ? { fulfillment_option_id: fulfillmentId } : {}),
       ...(maxTotalMinor === undefined ? {} : { constraints: { max_total_minor: maxTotalMinor } }),
     }); } catch (error) {

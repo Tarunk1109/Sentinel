@@ -1,10 +1,16 @@
-# SENTINEL — Phase 5
+# SENTINEL
 
 SENTINEL turns a Request Mode prompt, an Inspect Mode photo of something broken, or a Build Mode reference photo of something to create, into real Agnic product discovery, an evidence-based shortlist, merchant preparation, and a safe checkout quote. The light dashboard shows actual server activity, fulfillment choices, budget blocks, and a separate sandbox checkout flow. See [PHASE4A_REPORT.md](PHASE4A_REPORT.md) (Inspect Mode) and [PHASE5_REPORT.md](PHASE5_REPORT.md) (Build Mode) for what changed in each phase.
 
-**Real purchase execution is unconditionally disabled.** The only dispatch implementation is a separate test flow requiring server-verified `is_test=true`, an explicitly configured test-card alias, a fresh quote, and the user's confirmation.
+**Real purchase execution is unconditionally disabled.** The only dispatch implementation is a separate test flow requiring either a server-verified test merchant or Agnic's exact documented Shopify gateway sandbox identity, an explicitly configured test-card alias, a fresh quote, and the user's confirmation.
 
-**Current live sandbox blocker:** Agnic reports `is_test=false` for its documented test merchant. SENTINEL rejects it; no live dispatch was sent. Implemented states and fixture tests are not evidence of a completed live purchase. See [PHASE3_REPORT.md](PHASE3_REPORT.md) for measured live results, call counts, and validation.
+**Current sandbox status:** the narrow `untitled-fidget.shop` exception follows Agnic's current testing documentation: this ordinary Shopify merchant intentionally reports `is_test=false` while Shopify Payments is in test mode. The primary Hex Token is currently unavailable; the official Paw Print Charm backup has a live C$1.15 checkout ceiling before a delivery address. No dispatch has been sent. A successful order is never claimed without a genuine Agnic order ID and terminal status.
+
+## Real vs demo vs not implemented
+
+- **Real:** Request, multimodal Inspect, Build reasoning and bill of materials, Agnic discovery and live quotes, the Autopilot mandate engine, deterministic transcript interpretation, and browser speech input where supported.
+- **Demo/runtime only:** Autopilot policies and runs use bounded in-memory storage. They reset on restart and can differ across serverless instances. Development fixtures are explicitly labelled and are unavailable in production.
+- **Not implemented:** a persistent background scheduler, production accounts/database, or real-money purchase execution. `Run now` evaluates a mandate and never purchases.
 
 ## Run locally
 
@@ -21,7 +27,7 @@ npm run build
 npm run start -- --port 3001
 ```
 
-Open [SENTINEL](http://127.0.0.1:3001). Scripts bind loopback only. Rebuild and restart production after source changes. The local Codex preview logs to `/private/tmp/sentinel-preview.log` so reopening the editor does not break its output pipe. This is a single-user local application, not a public hosted service.
+Open [SENTINEL](http://127.0.0.1:3001). Scripts bind loopback only. Rebuild and restart production after source changes. The local checkout safety journal requires a persistent filesystem; do not enable sandbox dispatch on an ephemeral serverless deployment.
 
 ## Architecture
 
@@ -84,9 +90,29 @@ reference image + goal/already-own/requirements → one bounded scene-analysis c
 - **Fixture-tested:** `src/lib/server/demo/build-fixtures.ts` provides three named scenes (`gaming-desk-setup`, `home-office-setup`, `simple-streaming-setup`), each with matching invented product results per component, clearly labelled `(DEVELOPMENT FIXTURE)` / "Fixture Demo Merchant (invented, not real)" and never routed through the real mission/checkout pipeline. A local, explicit `SENTINEL_BUILD_FIXTURE=<name>` env var can bypass the paid call during development only, and is rejected outright outside development/test - never a silent live fallback.
 - **Still blocked:** a selected Build component's checkout reaches the same Agnic sandbox merchant blocker described below; nothing in this phase touches that code path. See [PHASE5_REPORT.md](PHASE5_REPORT.md) for what is live, fixture-tested, and not yet live.
 
-## Autopilot and Voice (headless core)
+## Autopilot and Voice
 
-API and domain logic only; no UI is wired yet. **Autopilot** turns a standing mandate ("keep Coke, Sprite and Fanta stocked, weekly, at most C$70") into scheduled or on-demand runs that generate the same `ProductIntent` Request Mode uses, search through the existing commerce pipeline only when explicitly asked, and return an auditable mandate decision: `AUTO_AUTHORIZED`, `NEEDS_APPROVAL` or `BLOCKED`. `AUTO_AUTHORIZED` means the mandate permits the action; nothing is ever purchased, and every run carries `purchaseExecuted: false`. **Voice** adds a browser `SpeechRecognition` adapter and a deterministic, zero-model-call transcript interpreter that returns a command (search request, autopilot draft, pause/resume/run-now, clarification) for the UI to act on; it can only draft an autopilot, never activate one or buy anything. Autopilot state is in memory and there is no background scheduler. See [docs/AUTOPILOT_VOICE_ENGINEERING.md](docs/AUTOPILOT_VOICE_ENGINEERING.md) and the UI contract in [docs/AUTOPILOT_VOICE_UI_CONTRACT.md](docs/AUTOPILOT_VOICE_UI_CONTRACT.md).
+The dashboard now connects the headless core to a review-first UI. **Autopilot** turns a standing mandate ("keep Coke, Sprite and Fanta stocked, weekly, at most C$70") into scheduled or on-demand runs that generate the same `ProductIntent` Request Mode uses, search through the existing commerce pipeline only when explicitly asked, and return an auditable mandate decision: `AUTO_AUTHORIZED`, `NEEDS_APPROVAL` or `BLOCKED`. `AUTO_AUTHORIZED` means the mandate permits the action; nothing is ever purchased, and every run carries `purchaseExecuted: false`. **Voice** uses browser `SpeechRecognition` plus a deterministic, zero-model-call transcript interpreter. A voice instruction becomes a visible draft that the user must review and confirm. Unsupported browsers retain the text input. No audio is stored. Autopilot state is in memory and there is no background scheduler. See [docs/AUTOPILOT_VOICE_ENGINEERING.md](docs/AUTOPILOT_VOICE_ENGINEERING.md) and [docs/AUTOPILOT_VOICE_UI_CONTRACT.md](docs/AUTOPILOT_VOICE_UI_CONTRACT.md).
+
+## Deployment environment
+
+Configure these server-only values; never use `NEXT_PUBLIC_*` for secrets:
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI server credential |
+| `AGNIC_API_KEY` or `AGNIC_TOKEN` | Agnic server credential |
+| `SENTINEL_ALLOW_PAID_AI` | Explicit paid-model opt-in; keep `false` until ready |
+| `SENTINEL_REAL_PURCHASES_ENABLED` | Keep `false`; compiled real execution remains locked |
+| `SENTINEL_DEVELOPMENT_MODE` | Keep `false` in production |
+| `SENTINEL_BUILD_SESSION_SECRET` | Shared HMAC secret for multi-instance Build sessions |
+| `SENTINEL_APP_ORIGIN` | Exact production origin allowed by API origin checks |
+| `SENTINEL_SANDBOX_MERCHANT_ID` | Documented Agnic sandbox merchant identity |
+| `SENTINEL_SANDBOX_CARD_ALIAS_ID` | Hosted vaulted test-card alias only |
+| `SENTINEL_SANDBOX_CARD_CONFIRMED` | Server assertion that the alias is a test card |
+| `SENTINEL_SANDBOX_SHIP_TO_JSON` | Gitignored CA/US sandbox destination; contains personal data |
+
+Vercel can host the UI and non-durable demo paths, but sandbox dispatch must remain disabled there: the once-only dispatch journal and AI budget ledger require persistent local storage. Autopilot state is also runtime-only. Use a persistent Node host before enabling the sandbox alias on a public deployment.
 
 ## Request and checkout flow
 
@@ -138,7 +164,7 @@ There is no real-commerce dispatch route. Frontend `is_test` or merchant/amount 
 
 `REAL_COMMERCE_MODE` permits discovery, explore, and preview. `assertRealPurchasesEnabled()` always throws, even if environment flags are changed. Keep `SENTINEL_REAL_PURCHASES_ENABLED=false` and `SENTINEL_DEVELOPMENT_MODE=true`.
 
-`SANDBOX_COMMERCE_MODE` is separate. `assertSandboxMerchant()` requires Agnic's `is_test=true` and the Shopify rail; neither the domain name nor a frontend flag establishes test status. No raw card fields are collected. The account default card is never selected by this code.
+`SANDBOX_COMMERCE_MODE` is separate. `assertSandboxMerchant()` normally requires Agnic's `is_test=true` and the Shopify rail. Its only exception is the exact merchant ID, domain, rail, currency, quantity, and support-confirmed SKUs for Agnic's documented Shopify Payments test-mode shop. No frontend flag can create that identity. No raw card fields are collected, and the account default card is never selected by this code.
 
 The service joins concurrent operations and disables confirmation before execution. Before dispatch it exclusively creates a durable attempt file under `.sentinel/sandbox-attempts/`, then records the returned order ID/status atomically. Failed or uncertain attempts remain claimed and must not be retried. The private attempt key derives from the browser owner, verified merchant ID, and variant SKU. It blocks another dispatch of that selection after checkout expiry or server restart. This deliberately permits only one attempt per selection and browser owner in the demo. Clearing browser cookies or using another application is outside this local guard; it is not provider-wide idempotency.
 
@@ -158,9 +184,9 @@ The unchanged **C$5 cap controls OpenAI inference only**. It never limited Agnic
 
 ## Manual Agnic setup
 
-1. Ask Agnic to designate the official test merchant as `is_test=true` in its merchant API, or provide the current official test merchant identity. Set an organizer-provided ID in the server-only `SENTINEL_SANDBOX_MERCHANT_ID` setting. The server must verify its metadata before any dispatch. Do not override the test check locally.
+1. Keep `SENTINEL_SANDBOX_MERCHANT_ID=merchant_untitled_fidget_shop`. SENTINEL re-fetches and verifies the exact `untitled-fidget.shop` Shopify/CAD identity and allows only the two support-confirmed variant IDs. This follows Agnic's documented statement that this gateway sandbox reports `is_test=false` by design.
 2. Use [Agnic's hosted card setup](https://app.agnic.ai/partner/cards/new) with its documented **test** payment method only. Store only the resulting alias in `SENTINEL_SANDBOX_CARD_ALIAS_ID` and set `SENTINEL_SANDBOX_CARD_CONFIRMED=true` after verifying it is a test card. Never put card numbers, expiry, or CVV in code, environment files, or SENTINEL input fields. If hosted test setup is unavailable, stop and ask Agnic.
-3. If fulfillment requires a delivery profile, complete the hosted profile flow in [Agnic](https://app.agnic.ai), following Agnic's test-data instructions. SENTINEL does not collect or log addresses. Ask Agnic for the required manual setup if no supported hosted test workflow is available.
+3. Configure a Canadian or US test destination only in the gitignored local `SENTINEL_SANDBOX_SHIP_TO_JSON` environment value. SENTINEL validates it server-side, binds the identical destination into quote and dispatch, and never returns or logs it. Do not commit personal address data.
 4. Restart after configuration changes, verify the sandbox merchant, obtain a fresh quote, then explicitly confirm in the TEST PURCHASE modal. Do not repeat an existing or uncertain order.
 
 ## Free backend diagnostics

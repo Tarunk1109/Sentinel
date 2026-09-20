@@ -28,4 +28,14 @@ export interface SandboxDispatch {
   merchantId: string; sku: string; quantity: number; amount: Price;
   maxTotalMinor: number; fulfillmentId?: string; approvedAt: string;
   confirmationText: 'Confirm Test Purchase'; originalRequest: string;
+  shipTo?: SandboxShipTo;
+}
+export interface SandboxShipTo {
+  name: string;
+  street_address: string;
+  address_locality: string;
+  address_region: string;
+  postal_code: string;
+  address_country: 'CA' | 'US';
+  phone?: string;
 }

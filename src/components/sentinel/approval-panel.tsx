@@ -1,5 +1,6 @@
 "use client";
 
+import { isOfficialShopifySandbox, isSandboxMerchant } from "@/lib/domain/sandbox";
 import { useState } from "react";
 import { Check, ExternalLink, FlaskConical, LoaderCircle, LockKeyhole, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ type CheckoutController = ReturnType<typeof useCheckout>;
 
 export function PurchaseProof({ checkout }: { checkout: CheckoutSession }) {
   const order = checkout.order;
-  if (checkout.mode !== "SANDBOX_COMMERCE_MODE" || checkout.stage !== "succeeded" || order?.status !== "succeeded" || !order.test) return null;
+  if (checkout.mode !== "SANDBOX_COMMERCE_MODE" || checkout.stage !== "succeeded" || order?.status !== "succeeded" || (!order.test && !isOfficialShopifySandbox(checkout.merchant))) return null;
   const evidenceUrl = publicUrl(order.orderUrl);
   return <section aria-labelledby="purchase-proof-title" className="rounded-xl border border-success/25 bg-success/5 p-5 sm:p-7">
     <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold tracking-widest text-success">PURCHASE PROOF</p><h3 id="purchase-proof-title" className="mt-3 flex items-center gap-2 text-xl font-semibold"><Check className="size-6 text-success" />Test order completed</h3></div><span className="rounded-full border border-success/25 px-3 py-1 text-xs font-semibold text-success">SANDBOX</span></div>
@@ -42,7 +43,7 @@ export function CheckoutReview({ product, quantity, state, onClear }: { product:
   const inFlight = checkout && ["dispatching", "processing", "exploring"].includes(checkout.stage);
   const orderStarted = Boolean(checkout?.approvedAt || checkout?.order || checkout?.stage === "unknown");
   const needsMerchant = checkout ? !checkout.merchant : product.onboardRequired;
-  const readyForConsent = Boolean(sandbox && checkout?.canConfirm && checkout.merchant?.isTest && hasTotal && !preview?.budgetViolation && !busy && !orderStarted);
+  const readyForConsent = Boolean(sandbox && checkout?.canConfirm && isSandboxMerchant(checkout.merchant) && hasTotal && !preview?.budgetViolation && !busy && !orderStarted);
   const setupUrl = publicUrl(checkout?.setup.cardSetupUrl ?? null);
   const guideUrl = publicUrl(checkout?.setup.guideUrl ?? null);
   const profileUrl = publicUrl(checkout?.setup.profileSetupUrl ?? null);

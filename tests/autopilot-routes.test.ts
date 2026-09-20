@@ -111,6 +111,7 @@ describe("Autopilot policy routes", () => {
     expect(first.body.runs[0]).toMatchObject({ demo: true, trigger: "SCHEDULE" });
     expect((await json(await runDue(request("/api/autopilot/run-due", { method: "POST", session })))).body.runs).toEqual([]);
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SENTINEL_APP_ORIGIN", "http://localhost");
     expect((await json(await seedDemo(request("/api/autopilot/demo", { method: "POST", session: newSession() })))).body.error.code).toBe("AUTOPILOT_DEMO_DISABLED");
   });
 

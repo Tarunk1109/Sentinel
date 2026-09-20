@@ -17,7 +17,7 @@ describe('independent real and sandbox financial safety', () => {
   });
   it('accepts authoritative test metadata only for the supported test payment rail', () => {
     expect(() => assertSandboxMerchant(merchant)).not.toThrow();
-    expect(() => assertSandboxMerchant({ ...merchant, isTest: false })).toThrow('is_test=true');
+    expect(() => assertSandboxMerchant({ ...merchant, isTest: false })).toThrow('verified test merchant');
     expect(() => assertSandboxMerchant({ ...merchant, rail: 'unknown' })).toThrow();
   });
   it('never infers a sandbox from an official-looking domain or name', () => {
@@ -49,5 +49,16 @@ describe('independent real and sandbox financial safety', () => {
       expect(sandboxConsentSchema.safeParse({ ...consent, ...injected }).success).toBe(false);
       expect(checkoutSelectionSchema.safeParse({ missionId: consent.checkoutId, productId: 'fixture-product', ...injected }).success).toBe(false);
     }
+  });
+});
+
+describe('documented Shopify gateway sandbox identity', () => {
+  const official = { id: 'merchant_untitled_fidget_shop', name: 'Official store', domain: 'untitled-fidget.shop', rail: 'shopify', isTest: false, currency: 'CAD' };
+  it('allows the documented gateway sandbox without rewriting its isTest metadata', () => {
+    expect(() => assertSandboxMerchant(official)).not.toThrow();
+    expect(official.isTest).toBe(false);
+  });
+  it.each([{ id: 'other' }, { domain: 'attacker.example' }, { rail: 'other' }, { currency: 'USD' }])('rejects a partial official identity: %j', change => {
+    expect(() => assertSandboxMerchant({ ...official, ...change })).toThrow();
   });
 });

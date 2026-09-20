@@ -124,7 +124,7 @@ export interface RuntimeStatus {
   aiEnabled: boolean;
   model: "gpt-6-astra";
   realPurchasesEnabled: false;
-  developmentMode: true;
+  developmentMode: boolean;
   intentModel?: "gpt-5.6-luna";
   aiBudget?: { spentCad: number; limitCad: number } | null;
   aiProvider?: "openai";

@@ -1,4 +1,5 @@
 import 'server-only';
+import { isSandboxMerchant, isOfficialShopifySandbox } from '@/lib/domain/sandbox';
 import { createHash, randomUUID } from 'node:crypto';
 import type { CheckoutSession, Merchant, SandboxConsent, SandboxInfo } from '@/lib/domain/checkout';
 import type { ProductCandidate, ProductIntent, SafePreview } from '@/lib/domain/commerce';
@@ -54,14 +55,14 @@ export class CheckoutService {
   async sandboxCatalog(signal: AbortSignal): Promise<SandboxInfo> {
     if (this.sandbox && this.sandbox.expires > Date.now()) return structuredClone(this.sandbox.value);
     const { merchant, products } = await this.provider.getSandboxProducts(context(signal));
-    const value = { merchant, products, blocked: !merchant.isTest || merchant.rail !== 'shopify' || !products.length, message: !merchant.isTest ? 'Sandbox blocked: Agnic reports is_test=false for its documented test store. Ask Agnic to provide a designated test merchant. SENTINEL will not override this flag.' : !products.length ? 'The verified test merchant has no available C$1 test products in the returned catalogue. Ask Agnic for a current test variant.' : 'Official test merchant verified by Agnic. Select a test product to prepare a quote.' };
+    const value = { merchant, products, blocked: !isSandboxMerchant(merchant) || !products.length, message: !isSandboxMerchant(merchant) ? 'Sandbox blocked: merchant safety identity is not verified.' : !products.length ? 'No test products available.' : isOfficialShopifySandbox(merchant) ? 'Official Shopify gateway sandbox. Agnic is_test remains false by design; only the support-confirmed C$1 variants and a confirmed vaulted test card are allowed. Obtain a live quote.' : 'Official test merchant verified by Agnic. Select a test product to prepare a quote.' };
     this.sandbox = { value, expires: Date.now() + 60_000 }; return structuredClone(value);
   }
   async beginSandbox(owner: string, productId: string, signal: AbortSignal): Promise<CheckoutSession> {
     const catalog = await this.sandboxCatalog(signal);
     assertSandboxMerchant(catalog.merchant);
     const product = catalog.products.find(p => p.id === productId);
-    if (!product || catalog.blocked) throw new ProviderError('SANDBOX_PRODUCT_UNAVAILABLE', 'Select an available product from the server-verified test catalogue.', 409);
+    if (!product || product.availability !== 'available' || catalog.blocked) throw new ProviderError('SANDBOX_PRODUCT_UNAVAILABLE', 'Select an available product from the server-verified test catalogue.', 409);
     const intent: ProductIntent = { originalRequest: `Test checkout: ${product.name}`, searchQuery: 'official test item', productType: 'test item', quantity: 1, budget: { maxAmount: 10, currency: 'CAD' }, country: 'CA', requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
     const key = `${owner}:sandbox:${productId}`;
     const prior = this.selections.get(key);
@@ -117,7 +118,7 @@ export class CheckoutService {
       e.state.message = preview.budgetViolation ? 'Purchase blocked: checkout exceeds your original budget. Edit the request to set new constraints; SENTINEL will not silently raise them.' : preview.message;
       if (preview.status === 'quoted' && preview.amount && !preview.requiresFulfillment) {
         e.state.quoteId = randomUUID(); e.state.quoteExpiresAt = new Date(Date.now() + 5*60_000).toISOString();
-        e.state.canConfirm = e.state.mode === 'SANDBOX_COMMERCE_MODE' && e.state.merchant?.isTest === true && Boolean(getTestCardAlias());
+        e.state.canConfirm = e.state.mode === 'SANDBOX_COMMERCE_MODE' && isSandboxMerchant(e.state.merchant) && Boolean(getTestCardAlias());
       }
     });
   }
@@ -141,7 +142,7 @@ export class CheckoutService {
       }
       if (order.merchantId && order.merchantId !== e.state.merchant?.id) throw new ProviderError('ORDER_MERCHANT_MISMATCH', 'Order metadata does not match the approved test merchant. Stop and contact Agnic.', 403);
       e.state.order = { ...order, orderUrl: order.orderUrl ?? e.state.order?.orderUrl ?? null };
-      if (order.status === 'succeeded' && order.test === true) { e.state.stage = 'succeeded'; e.state.message = 'Agnic confirms the test order succeeded. No real money moved and no real goods will ship.'; }
+      if (order.status === 'succeeded' && (order.test === true || isOfficialShopifySandbox(e.state.merchant))) { e.state.stage = 'succeeded'; e.state.message = 'Agnic confirms the test order succeeded. No real money moved and no real goods will ship.'; }
       else if (order.status === 'succeeded' || order.status === 'unknown') { e.state.stage = 'unknown'; e.state.message = 'The provider did not supply a verified test success. Inspect the existing order; no receipt was fabricated.'; }
       else if (terminalMessages[order.status]) { e.state.stage = 'failed'; e.state.message = ['payment_declined', 'card_declined', 'test_card_declined'].includes(order.errorCode ?? '') ? 'The test payment was declined. Check the configured test card in Agnic; this order will not be dispatched again.' : terminalMessages[order.status]; }
       else if (order.status === 'approval_required') { e.state.stage = 'blocked'; e.state.message = 'Agnic requires hosted setup or approval. Inspect the existing order; do not dispatch again.'; }

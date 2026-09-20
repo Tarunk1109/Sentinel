@@ -3,12 +3,22 @@ import { randomUUID } from "node:crypto";
 import { ProviderError, publicError } from "./provider-error";
 
 export function assertLocalRequest(request: Request): void {
-  // Next's standalone request URL can use localhost even when the browser used
-  // 127.0.0.1. Compare Origin to the actual HTTP Host, never a forwarded header.
+  // Compare Origin to the actual HTTP Host, never a forwarded header. Production
+  // hosts must be explicitly configured or supplied by Vercel for this deployment.
   const requestUrl = new URL(request.url);
   const authority = new URL(`${requestUrl.protocol}//${request.headers.get('host') ?? requestUrl.host}`);
   const origin = request.headers.get('origin');
-  if (!['localhost', '127.0.0.1', '[::1]'].includes(authority.hostname) || authority.username || authority.password || (origin && origin !== authority.origin) || request.headers.get('sec-fetch-site') === 'cross-site') throw new ProviderError('ORIGIN_REJECTED', 'Cross-site requests are not accepted.', 403);
+  const configuredOrigins = [
+    process.env.SENTINEL_APP_ORIGIN,
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined,
+  ].filter((value): value is string => Boolean(value)).flatMap(value => {
+    try { const parsed = new URL(value); return parsed.username || parsed.password || !['http:', 'https:'].includes(parsed.protocol) ? [] : [parsed.origin]; }
+    catch { return []; }
+  });
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(authority.hostname);
+  const allowed = process.env.NODE_ENV !== 'production' ? local : configuredOrigins.includes(authority.origin);
+  if (!allowed || authority.username || authority.password || (origin && origin !== authority.origin) || request.headers.get('sec-fetch-site') === 'cross-site') throw new ProviderError('ORIGIN_REJECTED', 'Cross-site requests are not accepted.', 403);
 }
 export async function readJson(request: Request, maxBytes = 8192): Promise<unknown> {
   assertLocalRequest(request);

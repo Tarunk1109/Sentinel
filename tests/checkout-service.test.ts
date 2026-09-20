@@ -84,6 +84,11 @@ describe('checkout selection and ownership', () => {
     const { service } = setup();
     await expect(service.beginSandbox(owner, 'frontend-invented-product', signal())).rejects.toMatchObject({ code: 'SANDBOX_PRODUCT_UNAVAILABLE' });
   });
+  it('rejects a currently unavailable official sandbox product', async () => {
+    const { service, provider } = setup();
+    provider.getSandboxProducts.mockResolvedValue({ merchant, products: [{ ...testProduct, availability: 'unavailable' }] });
+    await expect(service.beginSandbox(owner, testProduct.id, signal())).rejects.toMatchObject({ code: 'SANDBOX_PRODUCT_UNAVAILABLE' });
+  });
 });
 
 describe('merchant exploration tracking', () => {

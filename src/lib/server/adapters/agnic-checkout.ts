@@ -1,8 +1,9 @@
 import 'server-only';
+import { isOfficialShopifySandbox, isSandboxMerchant, OFFICIAL_SANDBOX_ITEMS } from '@/lib/domain/sandbox';
 import { z } from 'zod';
 import { AgnicProvider, safePublicHttpsUrl } from './agnic';
 import { getAgnicToken } from '../config';
-import { assertSandboxMerchant, getTestCardAlias } from '../safety';
+import { assertSandboxMerchant, getSandboxShipTo, getTestCardAlias } from '../safety';
 import { ProviderError } from '../provider-error';
 import { currencySchema, type Price, type ProductCandidate, type ProductIntent } from '@/lib/domain/commerce';
 import type { ExploreResult, Merchant, ProviderOrder, SandboxDispatch } from '@/lib/domain/checkout';
@@ -62,9 +63,23 @@ export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProv
     // A replacement identity must come from Agnic, configured on the server.
     // Configuration selects a merchant; it never overrides its test status.
     const merchant = await this.getMerchant(process.env.SENTINEL_SANDBOX_MERCHANT_ID?.trim() || 'merchant_untitled_fidget_shop', context);
-    if (!merchant.isTest) return { merchant, products: [] };
+    if (!isSandboxMerchant(merchant)) return { merchant, products: [] };
     assertSandboxMerchant(merchant);
-    const intent: ProductIntent = { originalRequest: 'Official sandbox hex token fidget', searchQuery: 'hex token fidget', productType: 'fidget', quantity: 1, country: 'CA', budget: { maxAmount: 1, currency: 'CAD' }, requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
+    if (isOfficialShopifySandbox(merchant)) {
+      // Shopify quote resolves official variants directly; catalog_error metadata is
+      // irrelevant for this documented rail. Availability and totals still need a live quote.
+      const products: ProductCandidate[] = OFFICIAL_SANDBOX_ITEMS.map(item => ({
+        id: item.sku, sku: item.sku, productGid: null, name: item.name, brand: null,
+        description: 'Official Agnic sandbox variant. C$1 reference price; obtain a live quote.',
+        merchantName: merchant.name, merchantId: merchant.id, merchantUrl: 'https://untitled-fidget.shop',
+        productUrl: null, imageUrl: null, price: { amountMinor: 100, currency: 'CAD' },
+        availability: item.sku.endsWith('43945235349570') ? 'unavailable' : 'available', country: 'CA', onboardRequired: false, metadata: { source: 'Agnic support-confirmed SKU' },
+        compatibility: { status: 'NEEDS_VERIFICATION', reasons: [], missingInformation: ['Live quote required'] },
+        requiredConstraintsSatisfied: null, score: 0, recommendation: 'Official sandbox item; not a live catalogue result.',
+      }));
+      return { merchant, products };
+    }
+    const intent: ProductIntent = { originalRequest: 'Official sandbox hex token fidget', searchQuery: 'hex token fidget', productType: 'fidget', quantity: 1, country: 'CA', budget: { maxAmount: 10, currency: 'CAD' }, requiredFeatures: [], preferredFeatures: [], excludedFeatures: [], compatibilityRequirements: [], brandPreferences: [], merchantPreferences: [], urgency: null };
     const products = (await this.searchProducts(intent, context)).filter(p => p.merchantId === merchant.id && p.price?.currency === 'CAD' && p.price.amountMinor <= 100 && p.availability === 'available');
     return { merchant, products };
   }
@@ -94,10 +109,12 @@ export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProv
     // Independently re-fetch immediately before the only network execution path.
     const merchant = await this.getMerchant(input.merchantId, context);
     assertSandboxMerchant(merchant);
+    if (isOfficialShopifySandbox(merchant) && (!OFFICIAL_SANDBOX_ITEMS.some(item => item.sku === input.sku) || input.quantity !== 1)) throw new ProviderError('SANDBOX_VARIANT_REQUIRED', 'Only one official C$1 sandbox variant is allowed.', 403);
     const alias = getTestCardAlias();
     if (!alias) throw new ProviderError('TEST_CARD_REQUIRED', 'Configure a confirmed test-card alias through Agnic’s hosted setup first. The default or a real card will never be used.', 409);
     if (input.confirmationText !== 'Confirm Test Purchase' || !Number.isFinite(Date.parse(input.approvedAt))) throw new ProviderError('TEST_CONSENT_REQUIRED', 'Explicit test-purchase confirmation is required.', 403);
     if (!Number.isSafeInteger(input.quantity) || input.quantity < 1 || input.quantity > 10 || !Number.isSafeInteger(input.amount.amountMinor) || !Number.isSafeInteger(input.maxTotalMinor) || input.maxTotalMinor < 0 || input.amount.amountMinor > input.maxTotalMinor || input.amount.amountMinor < 0 || input.amount.currency !== merchant.currency) throw new ProviderError('BUDGET_EXCEEDED', 'The sandbox checkout has an invalid amount, quantity, currency or limit.', 409);
-    return normalizeOrder(await this.#send('/api/autofill/dispatch', context, { merchant_id: input.merchantId, items: [{ sku: input.sku, quantity: input.quantity }], amount_minor: input.amount.amountMinor, currency: input.amount.currency, card_alias_id: alias, user_confirmation_text: input.confirmationText, user_approved_at_iso: input.approvedAt, user_prompt: input.originalRequest, constraints: { max_total_minor: input.maxTotalMinor }, ...(input.fulfillmentId ? { fulfillment_option_id: input.fulfillmentId } : {}) }));
+    const shipTo = isOfficialShopifySandbox(merchant) ? getSandboxShipTo() : null;
+    return normalizeOrder(await this.#send('/api/autofill/dispatch', context, { merchant_id: input.merchantId, items: [{ sku: input.sku, quantity: input.quantity }], amount_minor: input.amount.amountMinor, currency: input.amount.currency, card_alias_id: alias, user_confirmation_text: input.confirmationText, user_approved_at_iso: input.approvedAt, user_prompt: input.originalRequest, constraints: { max_total_minor: input.maxTotalMinor }, ...(input.fulfillmentId ? { fulfillment_option_id: input.fulfillmentId } : {}), ...(shipTo ? { ship_to: shipTo } : {}) }));
   }
 }

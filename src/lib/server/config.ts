@@ -13,7 +13,7 @@ export function getRuntimeStatus(): RuntimeStatus {
     aiEnabled: process.env.SENTINEL_ALLOW_PAID_AI === "true",
     model: "gpt-6-astra",
     realPurchasesEnabled: false,
-    developmentMode: true,
+    developmentMode: process.env.NODE_ENV !== "production",
     aiProvider: 'openai',
   };
 }

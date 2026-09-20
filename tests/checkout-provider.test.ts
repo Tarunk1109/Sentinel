@@ -26,6 +26,17 @@ function withDispatch() {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('merchant discovery and setup', () => {
+  it('allows only the exact documented Shopify gateway sandbox and official variants', async () => {
+    const official = { id: 'merchant_untitled_fidget_shop', name: 'untitled-fidget.shop', domain: 'untitled-fidget.shop', rail: 'shopify', is_test: false, default_currency: 'CAD' };
+    const { provider, network } = setup(official);
+    const result = await provider.getSandboxProducts(context());
+    expect(result.merchant).toMatchObject({ id: official.id, isTest: false, rail: 'shopify' });
+    expect(result.products.map(item => [item.sku, item.availability])).toEqual([
+      ['gid://shopify/ProductVariant/43945235349570', 'unavailable'],
+      ['gid://shopify/ProductVariant/43945255567426', 'available'],
+    ]);
+    expect(network).toHaveBeenCalledTimes(1);
+  });
   it('accepts an organizer-provided server merchant ID but still blocks a non-test merchant', async () => {
     vi.stubEnv('SENTINEL_SANDBOX_MERCHANT_ID', merchant.id);
     const { provider, network } = setup({ ...merchant, is_test: false });
