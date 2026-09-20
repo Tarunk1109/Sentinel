@@ -44,12 +44,17 @@ export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProv
       context.usage.agnicCalls++;
       const response = await this.checkoutFetch(`https://api.agnic.ai${path}`, { method: body ? 'POST' : 'GET', headers: { 'X-Agnic-Token': token, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, redirect: 'error', cache: 'no-store', signal });
       if (response.status === 202 && path.endsWith('/dispatch')) {
-        // Agnic states which part of hosted setup is missing. Surfacing its own short
-        // reason makes the blocker actionable; no identifier or credential is included.
+        // Agnic holds a vaulted security code for about fifty minutes, then answers a
+        // step-up instead of charging. Its own reason and hosted approval link are the
+        // only way past it, so both are surfaced. The link is matched by shape rather
+        // than by field name, and no token or credential is ever included.
         const detail = await response.json().catch(() => null) as Record<string, unknown> | null;
         const reason = ['error_code', 'error', 'reason', 'required', 'message', 'detail', 'status']
           .map(key => detail?.[key]).find((value): value is string => typeof value === 'string' && value.trim().length > 0);
-        throw new ProviderError('AGNIC_HOSTED_SETUP', `Agnic requires hosted approval, card refresh or a matching mandate${reason ? ` (Agnic reported: ${reason.trim().slice(0, 200)})` : ''}. No automatic dispatch retry is allowed; finish hosted setup and review the saved attempt.`, 409);
+        const approval = Object.values(detail ?? {}).find((value): value is string =>
+          typeof value === 'string' && /^https:\/\/(app|checkout)\.agnic\.ai\//.test(value));
+        const step = reason?.trim().slice(0, 120);
+        throw new ProviderError('AGNIC_HOSTED_SETUP', `Agnic needs its hosted step-up before it will charge${step ? ` (${step})` : ''}. A vaulted security code is held for about fifty minutes, so re-enter it${approval ? ` at ${approval}` : ' in your hosted Agnic account'}, then start a new test checkout. This attempt is saved and is never repeated automatically.`, 409);
       }
       if (!response.ok) {
         const message = response.status === 401 || response.status === 403 ? 'Agnic rejected the server credential. Check account access.' : response.status === 429 ? 'Agnic is rate limiting requests. Wait before checking this job again.' : response.status === 402 ? 'Agnic needs account or balance setup. SENTINEL will not pay or change limits.' : response.status === 409 ? 'Agnic refused the current amount, fulfillment or constraints. Obtain a new preview; do not repeat dispatch.' : response.status === 422 ? 'The selected SKU is unavailable. Select a current variant.' : response.status >= 500 ? 'Agnic returned a server error. Check the existing job or contact Agnic before trying again; SENTINEL made no automatic retry.' : 'Agnic rejected this operation. Check merchant and account setup before trying again.';
