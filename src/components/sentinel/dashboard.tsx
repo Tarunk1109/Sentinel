@@ -1,10 +1,11 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleHelp, CircleDot, Hexagon, LockKeyhole, Pause, Play, Plus, ShieldCheck, ShoppingBag, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleHelp, CircleDot, Hexagon, LockKeyhole, Pause, Play, Plus, Receipt, ShieldCheck, ShoppingBag, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { AutopilotPanel } from "./autopilot-panel";
+import { OrdersPanel } from "./orders-panel";
 import { QuickStart } from "./quick-start";
 import { ModeCards } from "./mode-cards";
 import { ModeOverview, SimpleJourney, WelcomeHero } from "./welcome";
@@ -28,6 +29,7 @@ const modeNoun: Record<Mode, string> = { request: "request", inspect: "inspectio
 
 export function Dashboard() {
   const [autopilotOpen, setAutopilotOpen] = useState(false);
+  const [ordersOpen, setOrdersOpen] = useState(false);
   const [motionEnabled, setMotionEnabled] = useState(true);
   const [view, setView] = useState<Mode>("request");
   const [inspectKey, setInspectKey] = useState(0);
@@ -56,7 +58,7 @@ export function Dashboard() {
     focusView(view);
   }
   function chooseMode(mode: Mode) {
-    setAutopilotOpen(false);
+    setAutopilotOpen(false); setOrdersOpen(false);
     setView(mode);
     setSelectedProduct(null); setInteractionSteps({});
     if (mode === view) requestAnimationFrame(() => focusView(mode));
@@ -77,7 +79,8 @@ export function Dashboard() {
       <div className="sidebar-workspace"><span className="sidebar-workspace-icon"><Workflow size={16} /></span><span><strong>Commerce workspace</strong><small>Personal workspace</small></span></div>
       <div className="sidebar-section-label">WORKSPACE</div>
       <ModeCards active={view} onSelect={chooseMode} />
-      <Button variant={autopilotOpen ? "secondary" : "ghost"} className="mx-4 mt-3 justify-start" aria-pressed={autopilotOpen} onClick={() => setAutopilotOpen(true)}><Workflow size={16} />Autopilot & Voice</Button>
+      <Button variant={autopilotOpen ? "secondary" : "ghost"} className="mx-4 mt-3 justify-start" aria-pressed={autopilotOpen} onClick={() => { setAutopilotOpen(true); setOrdersOpen(false); }}><Workflow size={16} />Autopilot & Voice</Button>
+      <Button variant={ordersOpen ? "secondary" : "ghost"} className="mx-4 mt-2 justify-start" aria-pressed={ordersOpen} onClick={() => { setOrdersOpen(true); setAutopilotOpen(false); requestAnimationFrame(() => document.getElementById("main")?.scrollIntoView({ behavior: "smooth", block: "start" })); }}><Receipt size={16} />Orders</Button>
       <div className="sidebar-bottom">
         <div className="sidebar-approval"><ShieldCheck size={19} /><strong>Built around your approval</strong><p>Review the details. You make the final decision.</p><span><LockKeyhole size={11} />Real purchases disabled</span></div>
         <button className="sidebar-guide" onClick={() => setInfo("guide")}><CircleHelp size={16} />How SENTINEL works<ArrowUpRight size={13} /></button>
@@ -86,12 +89,12 @@ export function Dashboard() {
     </aside>
     <div className="workspace-shell">
     <header className="site-header"><div className="header-inner">
-      <div className="header-breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>{view === "request" ? "Overview" : view === "inspect" ? "Inspect" : "Build"}</strong></div>
+      <div className="header-breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>{ordersOpen ? "Orders" : view === "request" ? "Overview" : view === "inspect" ? "Inspect" : "Build"}</strong></div>
       <div className="header-actions"><QuickStart disabled={isRunning} onChooseMode={chooseMode} onUseExample={example => { chooseMode("request"); setPrompt(example); requestAnimationFrame(focusRequest); }} /><button type="button" className="motion-toggle" onClick={() => setMotionEnabled(value => !value)} aria-label={motionEnabled ? "Pause animations" : "Resume animations"} title={motionEnabled ? "Pause decorative animations" : "Resume decorative animations"}>{motionEnabled ? <Pause size={14} /> : <Play size={14} />}</button><span className="header-divider" /><button aria-label="Integration status" className={`connection-button ${mission ? "connected" : ""}`} onClick={() => setInfo("system")}><span className="connection-dot" /><span>{credentialLabel}</span><ArrowUpRight size={13} /></button><Button variant="ghost" size="icon" className="help-button" onClick={() => setInfo("guide")} aria-label="Open quick guide"><CircleHelp size={18} /></Button></div>
     </div></header>
     <div className="test-banner"><div><span className="test-badge"><ShieldCheck size={13} />PREVIEW WORKSPACE</span><span className="banner-separator">·</span><span>Explore with confidence. Real purchases are disabled.</span></div><button onClick={() => setInfo("system")}>About this preview<ArrowUpRight size={12} /></button></div>
-    <main id="main" tabIndex={-1} className="main-content"><div className="studio-wayfinding"><span><span className="workspace-indicator" />{view === "request" ? "YOUR COMMERCE WORKSPACE" : view === "inspect" ? "VISUAL INSPECTION" : "PROJECT PLANNING"}</span><span className="studio-edition">Canada <span>·</span> CAD</span></div>
-      {autopilotOpen ? <AutopilotPanel onRequest={text => { chooseMode("request"); setPrompt(text); requestAnimationFrame(focusRequest); }} /> : <>
+    <main id="main" tabIndex={-1} className="main-content"><div className="studio-wayfinding"><span><span className="workspace-indicator" />{ordersOpen ? "SANDBOX ORDER HISTORY" : view === "request" ? "YOUR COMMERCE WORKSPACE" : view === "inspect" ? "VISUAL INSPECTION" : "PROJECT PLANNING"}</span><span className="studio-edition">Canada <span>·</span> CAD</span></div>
+      {ordersOpen ? <OrdersPanel /> : autopilotOpen ? <AutopilotPanel onRequest={text => { chooseMode("request"); setPrompt(text); requestAnimationFrame(focusRequest); }} /> : <>
       {view === "request" ? <div className="request-stage">
         <WelcomeHero />
         <RequestComposer prompt={prompt} onPromptChange={setPrompt} onSubmit={() => { setSelectedProduct(null); setInteractionSteps({}); void run(prompt.trim()); }} isRunning={isRunning} onCancel={cancel} error={error} inputRef={inputRef} status={status} />

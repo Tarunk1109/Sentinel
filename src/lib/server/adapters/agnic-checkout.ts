@@ -34,7 +34,7 @@ function normalizeOrder(raw: unknown, fallbackId?: string): ProviderOrder {
 export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProvider {
   constructor(private readonly checkoutFetch: typeof fetch = fetch) { super(checkoutFetch); }
   async #send(path: string, context: CallContext, body?: object, timeout = 15000): Promise<unknown> {
-    const allowedRead = /^\/api\/autofill\/(merchants|orders)\/[a-zA-Z0-9_-]{1,160}$/.test(path) || path === '/api/autofill/cards' || path.startsWith('/api/autofill/products/lookup?');
+    const allowedRead = /^\/api\/autofill\/(merchants|orders)\/[a-zA-Z0-9_-]{1,160}$/.test(path) || path === '/api/autofill/cards' || path === '/api/autofill/orders' || path.startsWith('/api/autofill/products/lookup?');
     const allowedWrite = path === '/api/autofill/explore' || path === '/api/autofill/dispatch';
     if (body ? !allowedWrite : !allowedRead) throw new ProviderError('OPERATION_DISABLED', 'This commerce operation is not enabled.', 403);
     const token = getAgnicToken();
@@ -117,6 +117,20 @@ export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProv
   async getOrder(id: string, context: CallContext): Promise<ProviderOrder> {
     if (!identifier.safeParse(id).success) throw new ProviderError('INVALID_ORDER', 'Invalid order identifier.', 400);
     return normalizeOrder(await this.#send(`/api/autofill/orders/${id}`, context), id);
+  }
+  /** Read-only order history for this account, newest first. Agnic's list omits the
+   *  charged amount, so each entry is read individually for its settled figure. */
+  async listOrders(context: CallContext, limit = 25): Promise<ProviderOrder[]> {
+    const parsed = z.object({ orders: z.array(orderSchema).max(200) }).passthrough().safeParse(await this.#send('/api/autofill/orders', context));
+    if (!parsed.success) throw new ProviderError('AGNIC_ORDER_LIST_INVALID', 'Agnic did not return a readable order history.');
+    const recent = parsed.data.orders
+      .filter(order => order.id ?? order.order_id)
+      .sort((a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''))
+      .slice(0, limit);
+    return Promise.all(recent.map(async order => {
+      const id = (order.id ?? order.order_id)!;
+      return this.getOrder(id, context).catch(() => normalizeOrder(order, id));
+    }));
   }
   async getSandboxPaymentReadiness(context: CallContext) {
     const alias = getTestCardAlias();
