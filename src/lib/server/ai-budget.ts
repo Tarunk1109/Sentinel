@@ -1,6 +1,7 @@
 import "server-only";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProviderError } from "./provider-error";
@@ -14,7 +15,11 @@ export function costCad(model: ReasoningModel, input: number, output: number): n
 }
 const ledgerSchema = z.object({ spentCad: z.number().nonnegative(), reservations: z.record(z.string(), z.number().nonnegative()) });
 export class AiBudget {
-  constructor(private readonly directory = join(process.cwd(), ".sentinel")) {}
+  // Vercel deploys application files as read-only, so the ledger cannot live beside
+  // them: every reservation would fail and block the call it was meant to meter. Its
+  // writable temporary directory keeps the limit enforced per running instance, which
+  // is weaker than the durable local ledger and is not an account-wide guarantee.
+  constructor(private readonly directory = process.env.VERCEL ? join(tmpdir(), "sentinel-ai-budget") : join(process.cwd(), ".sentinel")) {}
   private async update<T>(action: (ledger: z.infer<typeof ledgerSchema>) => T): Promise<T> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const lockPath = join(this.directory, "ai-usage.lock");

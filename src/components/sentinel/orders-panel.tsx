@@ -27,14 +27,11 @@ function OrderRow({ order }: { order: ProviderOrder }) {
   const Icon = good ? CheckCircle2 : inFlight(order) ? Clock : CircleAlert;
   const link = publicUrl(order.orderUrl);
   return <li className={`rounded-xl border p-4 ${tone}`}>
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <span className="flex items-center gap-2 text-sm font-semibold">
-        <Icon className={`size-4 shrink-0 ${good ? "text-success" : inFlight(order) ? "text-muted-foreground" : "text-warning"}`} aria-hidden="true" />
-        {statusLabel(order)}
-      </span>
-      <span className="text-xs text-muted-foreground">{formatTime(order.timestamp)}</span>
+    <div className="flex flex-wrap items-center gap-2">
+      <Icon className={`size-4 shrink-0 ${good ? "text-success" : inFlight(order) ? "text-muted-foreground" : "text-warning"}`} aria-hidden="true" />
+      <span className="text-sm font-semibold">{statusLabel(order)}</span>
     </div>
-    <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+    <dl className="mt-3 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
       <div className="flex justify-between gap-3 sm:block">
         <dt className="text-muted-foreground sm:text-xs">Actual charge</dt>
         <dd className={`sm:mt-1 sm:text-base sm:font-semibold ${good ? "text-success" : ""}`}>{order.chargedAmount ? displayPrice(order.chargedAmount) : "Not charged"}</dd>
@@ -42,6 +39,10 @@ function OrderRow({ order }: { order: ProviderOrder }) {
       <div className="flex justify-between gap-3 sm:block">
         <dt className="text-muted-foreground sm:text-xs">Approved maximum</dt>
         <dd className="sm:mt-1 sm:text-base sm:font-semibold">{displayPrice(order.approvedAmount)}</dd>
+      </div>
+      <div className="flex justify-between gap-3 sm:block">
+        <dt className="text-muted-foreground sm:text-xs">Placed</dt>
+        <dd className="sm:mt-1 sm:font-medium"><time dateTime={order.timestamp ?? undefined}>{formatTime(order.timestamp)}</time></dd>
       </div>
     </dl>
     <p className="mt-3 break-all font-mono text-xs text-muted-foreground">{order.id}</p>

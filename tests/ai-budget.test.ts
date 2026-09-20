@@ -8,6 +8,16 @@ const directories: string[] = [];
 async function setup() { const directory = await mkdtemp(join(tmpdir(), 'sentinel-budget-test-')); directories.push(directory); return { directory, ledger: new AiBudget(directory) }; }
 afterEach(async () => { await Promise.all(directories.splice(0).map(d => rm(d, { recursive: true, force: true }))); });
 describe('persistent conservative C$5 budget', () => {
+  it('keeps the ledger off the read-only application directory on Vercel', async () => {
+    // A ledger beside the deployed files cannot be written there, and a reservation that
+    // cannot be recorded fails closed and blocks the very call it meters.
+    vi.stubEnv('VERCEL', '1');
+    try {
+      const reservation = await new AiBudget().reserve('gpt-5.6-luna', 1000, 100);
+      expect(reservation).toBeTruthy();
+      expect((await new AiBudget().status()).spentCad).toBeGreaterThan(0);
+    } finally { vi.unstubAllEnvs(); await rm(join(tmpdir(), 'sentinel-ai-budget'), { recursive: true, force: true }); }
+  });
   it('persists reservations across instances and reconciles actual token use', async () => {
     const { directory, ledger } = await setup(); const id = await ledger.reserve('gpt-5.6-luna', 10000, 1000);
     expect((await new AiBudget(directory).status()).spentCad).toBe(costCad('gpt-5.6-luna', 10000, 1000));
