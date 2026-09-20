@@ -69,6 +69,18 @@ export class CheckoutService {
     if (prior && this.entries.get(prior) && this.entries.get(prior)!.expires > Date.now()) return this.view(this.entry(owner, prior));
     const state = this.create(owner, { product, intent }, true); this.selections.set(key, state.id); return state;
   }
+  /** Runs the non-purchase sandbox setup in one invocation so serverless routing
+   * cannot lose an in-memory checkout between prepare, fulfillment and quote. */
+  async autoQuoteSandbox(owner: string, productId: string, signal: AbortSignal): Promise<CheckoutSession> {
+    let state = await this.beginSandbox(owner, productId, signal);
+    state = await this.prepare(owner, state.id, signal);
+    if (state.stage === 'exploring') return state;
+    state = await this.quote(owner, state.id, signal);
+    if (state.stage !== 'fulfillment') return state;
+    const standard = state.preview?.fulfillmentOptions?.find(option => option.title === 'Standard');
+    if (!standard) throw new ProviderError('STANDARD_FULFILLMENT_REQUIRED', 'The verified sandbox checkout did not return Standard delivery. No purchase was prepared.', 409);
+    return this.quote(owner, state.id, signal, standard.id);
+  }
   private billingProfileVerified(): boolean {
     return process.env.SENTINEL_AGNIC_AUTHORIZED_RETRY_ORDER_ID === AUTHORIZED_RETRY_ORDER_ID && process.env.SENTINEL_AGNIC_BILLING_PROFILE_CONFIRMED === 'true';
   }

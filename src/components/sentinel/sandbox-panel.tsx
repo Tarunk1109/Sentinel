@@ -11,6 +11,10 @@ import { CheckoutReview } from "./approval-panel";
 
 function SandboxCheckout({ product, onStep }: { product: ProductCandidate; onStep: (step: ActivityStep) => void }) {
   const state = useCheckout({ mode: "sandbox", productId: product.id }, onStep);
+  // A selected product starts one non-purchase server workflow. This intentionally
+  // runs only for the keyed product component, not on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void state.autoQuote(); }, []);
   return <CheckoutReview product={product} quantity={1} state={state} />;
 }
 

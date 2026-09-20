@@ -5,7 +5,7 @@ import type { CheckoutSession } from "@/lib/domain/checkout";
 import type { ActivityStep } from "@/lib/domain/commerce";
 
 type Selection = { mode: "real"; missionId: string; productId: string } | { mode: "sandbox"; productId: string };
-type Action = "prepare" | "quote" | "confirm" | "status";
+type Action = "prepare" | "quote" | "confirm" | "status" | "autoQuote";
 
 function messageFrom(value: unknown): string | null {
   if (value && typeof value === "object" && "error" in value) {
@@ -49,7 +49,7 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
     if (controller.current || (action === "confirm" && confirmationPending.current)) return;
     if (action === "confirm" && (!current.current?.canConfirm || !current.current.quoteId || selection.mode !== "sandbox")) return;
     const request = new AbortController(); controller.current = request;
-    const deadline = Date.now() + (action === "prepare" ? 180_000 : action === "confirm" || action === "status" ? 240_000 : 40_000);
+    const deadline = Date.now() + (action === "prepare" || action === "autoQuote" ? 180_000 : action === "confirm" || action === "status" ? 240_000 : 40_000);
     const timeout = setTimeout(() => request.abort(), deadline - Date.now());
     setBusy(action); setError(null);
     if (action === "confirm") {
@@ -68,6 +68,9 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
     }
     try {
       let value = current.current;
+      if (action === "autoQuote" && selection.mode === "sandbox") {
+        value = await call("/api/sandbox/auto-quote", { productId: selection.productId });
+      }
       if (!value) {
         value = selection.mode === "real"
           ? await call("/api/checkout/session", { missionId: selection.missionId, productId: selection.productId })
@@ -110,5 +113,5 @@ export function useCheckout(selection: Selection, onStep?: (step: ActivityStep) 
     }
   }
 
-  return { checkout, busy, error, prepare: () => perform("prepare"), quote: (fulfillmentId?: string) => perform("quote", fulfillmentId), confirm: () => perform("confirm"), checkStatus: () => perform("status") };
+  return { checkout, busy, error, autoQuote: () => perform("autoQuote"), prepare: () => perform("prepare"), quote: (fulfillmentId?: string) => perform("quote", fulfillmentId), confirm: () => perform("confirm"), checkStatus: () => perform("status") };
 }

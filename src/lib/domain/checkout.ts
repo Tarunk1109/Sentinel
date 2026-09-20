@@ -25,6 +25,7 @@ export const checkoutSelectionSchema = z.object({ missionId: z.string().uuid(), 
 export const checkoutActionSchema = z.object({ checkoutId: z.string().uuid() }).strict();
 export const checkoutQuoteSchema = checkoutActionSchema.extend({ fulfillmentId: z.string().min(1).max(2000).optional() }).strict();
 export const sandboxSelectionSchema = z.object({ productId: z.string().min(1).max(160) }).strict();
+export const sandboxAutoQuoteSchema = z.object({ productId: z.string().min(1).max(160) }).strict();
 export const sandboxConsentSchema = checkoutActionSchema.extend({ quoteId: z.string().uuid(), confirmed: z.literal(true), confirmationText: z.literal('Confirm Test Purchase') }).strict();
 export type SandboxConsent = z.infer<typeof sandboxConsentSchema>;
 export const AUTHORIZED_RETRY_ORDER_ID = 'af_ord_mu9enrtcm1rvph4a' as const;

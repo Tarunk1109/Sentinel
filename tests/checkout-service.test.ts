@@ -143,6 +143,14 @@ describe('merchant exploration tracking', () => {
 });
 
 describe('quote and consent enforcement', () => {
+  it('prepares and prices an official sandbox item in one non-purchase operation', async () => {
+    const { service, provider } = setup();
+    const quoted = await service.autoQuoteSandbox(owner, testProduct.id, signal());
+    expect(quoted).toMatchObject({ stage: 'quoted', canConfirm: true, preview: { amount: { amountMinor: 100, currency: 'CAD' } } });
+    expect(provider.getMerchant).toHaveBeenCalled();
+    expect(provider.previewOrder).toHaveBeenCalledTimes(1);
+    expect(provider.dispatchSandbox).not.toHaveBeenCalled();
+  });
   it('rejects fulfillment IDs that were not returned by the current quote', async () => {
     const { service, provider } = setup();
     const state = await service.beginSandbox(owner, testProduct.id, signal());
