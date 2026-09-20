@@ -19,8 +19,8 @@ const shortList = z.array(shortItem).max(8);
  * inferredRequirements, compatibilityRequirements, unknowns). These are the fields that
  * multiply by component count, so they get a tighter cap than `shortList` above (used for
  * the analysis-level existingItems/missingInformation, which don't multiply and weren't
- * implicated in the token-limit failure this bounds). See PHASE5_REPORT.md for the
- * output-token incident this was sized against.
+ * implicated in the token-limit failure this bounds). It is sized against a real
+ * output-token exhaustion, not chosen arbitrarily.
  */
 const componentEvidenceItem = z.string().min(1).max(120);
 const componentEvidenceList = z.array(componentEvidenceItem).max(3);
@@ -91,7 +91,7 @@ export const buildAnalysisSchema = z.object({
   /** Capped at 8, not the schema's old 12: only materially relevant components -
    * independently purchasable items, important integrated features, and meaningful
    * accessories - never every visually insignificant object. See STEP 2 in
-   * `analyzeBuildScene`'s instructions and PHASE5_REPORT.md for why. */
+   * `analyzeBuildScene`'s instructions for why. */
   components: z.array(buildComponentSchema).min(1).max(8),
   dependencies: z.array(buildDependencySchema).max(10),
   /** Component names the user's text already told us they own; matched case-insensitively
@@ -271,7 +271,7 @@ export function buildProductIntentFromComponent(component: BuildComponent, const
  * Pure and framework-agnostic. Allocation is weighted by functional role and quantity, never
  * split equally and never exceeding the user's own stated budget (rounding only ever removes
  * cents from the total, never adds them). This is a coherent estimate, not a claimed
- * optimization - see PHASE5_REPORT.md. Owned items are kept for dependency context but are
+ * optimization. Owned items are kept for dependency context but are
  * never allocated budget and are never auto-included for purchase.
  *
  * An INTEGRATED_FEATURE component (e.g. a desk's built-in keyboard tray) never becomes its
@@ -321,7 +321,7 @@ export interface BuildComponentResult {
    * was actually tried. Optional/absent on any result predating this field, and never set
    * for a fixture-sourced result (there is no second fixture dataset to fall back to).
    * Always shown honestly in the UI, whether or not the broadened search itself found
-   * anything - see PHASE5_REPORT.md. */
+   * anything. */
   broadenedTo?: string | null;
 }
 

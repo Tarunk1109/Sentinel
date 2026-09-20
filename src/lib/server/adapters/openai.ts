@@ -45,7 +45,7 @@ export class OpenAIReasoner implements ProductReasoner, ImageInspector, SceneAna
     // build_analysis: raised from 2200 after a real multi-object scene failed with
     // "did not complete within the token limit". Sized against the tightened schema (see
     // build.ts: 8 components max, 3 evidence items max per field, 120-char items) rather
-    // than raised arbitrarily - see PHASE5_REPORT.md. Deliberately Build-only: Request
+    // than raised arbitrarily. Deliberately Build-only: Request
     // Mode's product_intent and Inspect Mode's inspection_analysis are untouched.
     const maxOutput = name === "product_intent" ? 1000 : name === "inspection_analysis" ? 1600 : name === "build_analysis" ? 3600 : 1800;
     const estimatedInputTokens = reservationTokens ?? Buffer.byteLength(instructions + (typeof input === "string" ? input : "") + JSON.stringify(jsonSchema), "utf8") + 2048;

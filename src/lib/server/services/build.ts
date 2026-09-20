@@ -17,7 +17,7 @@ const MAX_COMPONENTS_PER_BATCH = 3;
  * caller's current `selectedIds`, never read from a Map keyed by a previous request. This
  * is what makes analyze -> search work across separate route invocations, dev-server
  * module reloads, and (in production) separate worker processes - see
- * `lib/server/build-session-token.ts` and PHASE5_REPORT.md.
+ * `lib/server/build-session-token.ts`.
  */
 export interface BuildSessionView {
   id: string;

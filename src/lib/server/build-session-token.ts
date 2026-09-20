@@ -10,7 +10,7 @@ import { ProviderError } from "./provider-error";
  * invocations, dev-server module reloads, and (in a real deployment) separate worker
  * processes: `analyze()` signs the validated analysis/constraints into an opaque token;
  * `search()` verifies it instead of reading any shared in-memory session store. See
- * PHASE5_REPORT.md for why the previous in-memory `Map` could not be trusted for this.
+ * An in-memory `Map` could not be trusted for this.
  *
  * The signing secret itself must be identical across those same boundaries, or
  * verification would fail for the same reason the old session store did. `SENTINEL_
