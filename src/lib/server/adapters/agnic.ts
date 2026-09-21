@@ -155,7 +155,7 @@ export class AgnicProvider implements CommerceProvider {
     }));
   }
 
-  async previewOrder(product: ProductCandidate, intent: ProductIntent, context: CallContext, fulfillmentId?: string): Promise<SafePreview> {
+  async previewOrder(product: ProductCandidate, intent: ProductIntent, context: CallContext, fulfillmentId?: string, deliveryRequired = false): Promise<SafePreview> {
     const base: SafePreview = {
       source: "agnic", status: "needs-setup", productId: product.id, quantity: intent.quantity,
       browsePrice: product.price, subtotal: null, shipping: null, tax: null, amount: null,
@@ -169,7 +169,11 @@ export class AgnicProvider implements CommerceProvider {
     const maxTotalMinor = intent.budget.maxAmount === null ? undefined : Math.floor(Number((intent.budget.maxAmount * 100).toFixed(8)));
     let raw: unknown;
     const isOfficialSandboxProduct = product.merchantId === 'merchant_untitled_fidget_shop' && product.merchantUrl && new URL(product.merchantUrl).hostname === 'untitled-fidget.shop';
-    const sandboxShipTo = isOfficialSandboxProduct ? getSandboxShipTo() : null;
+    // The destination is personal data, so it is released only for a fulfillment option
+    // that reports it needs one. Listing options and pricing a pickup never do, and a
+    // merchant with no delivery rate for the address rejects the cart outright when
+    // it is sent regardless.
+    const sandboxShipTo = isOfficialSandboxProduct && deliveryRequired ? getSandboxShipTo() : null;
     try { raw = await this.#request(QUOTE_PATH, context, undefined, {
       merchant_id: product.merchantId,
       items: [{ sku: product.sku, quantity: intent.quantity }],

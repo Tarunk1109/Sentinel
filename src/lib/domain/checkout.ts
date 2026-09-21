@@ -44,7 +44,7 @@ export type AuthorizedRetryConsent = z.infer<typeof authorizedRetryConsentSchema
 export interface SandboxPaymentReadiness { aliasFound: boolean; brand: string | null; lastFour: string | null }
 export interface SandboxDispatch {
   merchantId: string; sku: string; quantity: number; amount: Price;
-  maxTotalMinor: number; fulfillmentId?: string; approvedAt: string;
+  maxTotalMinor: number; fulfillmentId?: string; approvedAt: string; deliveryRequired?: boolean;
   confirmationText: 'Confirm Test Purchase'; originalRequest: string;
   shipTo?: SandboxShipTo;
 }

@@ -10,7 +10,7 @@ import { DispatchJournal } from '../dispatch-journal';
 
 const context = (signal: AbortSignal): CallContext => ({ signal, usage: { modelCalls: 0, agnicCalls: 0, inputTokens: 0, outputTokens: 0 } });
 type Selection = { product: ProductCandidate; intent: ProductIntent };
-type Entry = { owner: string; state: CheckoutSession; intent: ProductIntent; expires: number; exploreAttempted: boolean; exploreId: string | null; started: number; lastPoll: number; dispatched: boolean; dispatchAttemptId: string | null; fulfillmentId?: string; retryOfOrderId?: string };
+type Entry = { owner: string; state: CheckoutSession; intent: ProductIntent; expires: number; exploreAttempted: boolean; exploreId: string | null; started: number; lastPoll: number; dispatched: boolean; dispatchAttemptId: string | null; deliveryRequired?: boolean; fulfillmentId?: string; retryOfOrderId?: string };
 function sandboxAttemptId(owner: string, merchantId: string, sku: string): string {
   // Keep the durable claim stable across checkout expiry and process restarts, without exposing the owner.
   const hash = createHash('sha256').update(JSON.stringify(['sandbox-dispatch-v1', owner, merchantId, sku])).digest('hex').slice(0, 32);
@@ -83,9 +83,13 @@ export class CheckoutService {
     if (state.stage === 'exploring') return state;
     state = await this.quote(owner, state.id, signal);
     if (state.stage !== 'fulfillment') return state;
-    const standard = state.preview?.fulfillmentOptions?.find(option => option.title === 'Standard');
-    if (!standard) throw new ProviderError('STANDARD_FULFILLMENT_REQUIRED', 'The verified sandbox checkout did not return Standard delivery. No purchase was prepared.', 409);
-    return this.quote(owner, state.id, signal, standard.id);
+    // Standard delivery is preferred, but the merchant decides what it offers. When it
+    // publishes no delivery rate for the destination it still offers collection, and
+    // refusing that would block a checkout the merchant is willing to fulfil.
+    const options = state.preview?.fulfillmentOptions ?? [];
+    const chosen = options.find(option => option.title === 'Standard') ?? (options.length === 1 ? options[0] : undefined);
+    if (!chosen) throw new ProviderError('FULFILLMENT_UNAVAILABLE', options.length ? 'The verified sandbox checkout offered several options but no Standard delivery. No purchase was prepared.' : 'The verified sandbox merchant offered no way to fulfil this cart. No purchase was prepared.', 409);
+    return this.quote(owner, state.id, signal, chosen.id);
   }
   async autoConfirmSandbox(owner: string, productId: string, attemptId: string, signal: AbortSignal): Promise<CheckoutSession> {
     const quoted = await this.autoQuoteSandbox(owner, productId, signal);
@@ -168,10 +172,13 @@ export class CheckoutService {
     if (e.dispatched) return this.view(e);
     return this.job(e, async () => {
       if (e.state.product.onboardRequired) throw new ProviderError('MERCHANT_PREPARATION_REQUIRED', 'Prepare the selected merchant before checking its price.', 409);
-      if (fulfillmentId && !e.state.preview?.fulfillmentOptions?.some(o => o.id === fulfillmentId)) throw new ProviderError('FULFILLMENT_INVALID', 'Select a fulfillment option returned by the current merchant quote.', 400);
+      const chosen = fulfillmentId ? e.state.preview?.fulfillmentOptions?.find(o => o.id === fulfillmentId) : undefined;
+      if (fulfillmentId && !chosen) throw new ProviderError('FULFILLMENT_INVALID', 'Select a fulfillment option returned by the current merchant quote.', 400);
       e.state.canConfirm = false; e.state.quoteId = null; e.state.quoteExpiresAt = null;
       await this.merchantReady(e, signal);
-      const preview = await this.provider.previewOrder(e.state.product,e.intent,context(signal),fulfillmentId);
+      // Only a delivery option earns the saved destination; pickup is quoted without it.
+      e.deliveryRequired = Boolean(chosen?.requiresAddress);
+      const preview = await this.provider.previewOrder(e.state.product,e.intent,context(signal),fulfillmentId,e.deliveryRequired);
       e.state.preview = preview;
       e.fulfillmentId = fulfillmentId ?? preview.selectedFulfillmentId ?? undefined;
       e.state.stage = preview.requiresFulfillment ? 'fulfillment' : preview.status === 'quoted' ? 'quoted' : 'blocked';
@@ -219,7 +226,7 @@ export class CheckoutService {
       const merchant = await this.merchantReady(e,signal); assertSandboxMerchant(merchant);
       if (!getTestCardAlias()) throw new ProviderError('TEST_CARD_REQUIRED', 'Set up and explicitly configure a test-card alias using Agnic’s hosted page. SENTINEL will not use the default card.', 409);
       const approved = e.state.preview;
-      const fresh = await this.provider.previewOrder(e.state.product,e.intent,context(signal),e.fulfillmentId);
+      const fresh = await this.provider.previewOrder(e.state.product,e.intent,context(signal),e.fulfillmentId,e.deliveryRequired);
       if (!this.sameQuote(approved,fresh)) { e.state.preview = fresh; e.state.quoteId = null; e.state.quoteExpiresAt = null; e.state.canConfirm = false; e.state.stage = 'blocked'; e.state.message = 'Quote changed since review. Check the updated price and obtain a new confirmation.'; return; }
       const amount = fresh.amount!;
       // Each explicit interactive consent receives one token. Reusing it is
@@ -229,7 +236,7 @@ export class CheckoutService {
       // Mark once BEFORE any execution. Unknown outcomes may never be retried.
       e.dispatchAttemptId = attemptId; e.dispatched = true; e.state.canConfirm = false; e.state.stage = 'dispatching'; e.state.approvedAt = new Date().toISOString(); e.started = Date.now();
       try {
-        const order = await this.provider.dispatchSandbox({ merchantId: merchant.id, sku: e.state.product.sku, quantity: e.intent.quantity, amount, maxTotalMinor: Math.floor(e.intent.budget.maxAmount! * 100), fulfillmentId: e.fulfillmentId, approvedAt: e.state.approvedAt, confirmationText: input.confirmationText, originalRequest: e.intent.originalRequest },context(signal));
+        const order = await this.provider.dispatchSandbox({ merchantId: merchant.id, sku: e.state.product.sku, quantity: e.intent.quantity, amount, maxTotalMinor: Math.floor(e.intent.budget.maxAmount! * 100), fulfillmentId: e.fulfillmentId, deliveryRequired: e.deliveryRequired, approvedAt: e.state.approvedAt, confirmationText: input.confirmationText, originalRequest: e.intent.originalRequest },context(signal));
         e.state.order = order; e.state.stage = 'processing'; e.state.message = 'Test order dispatched once. Merchant checkout processing; only order status will be polled.';
         await this.journal.record(attemptId,order.id,order.status);
       } catch (error) { e.state.stage = 'unknown'; e.state.message = publicError(error).message + ' This dispatch attempt is saved and cannot be repeated.'; await this.journal.record(attemptId,e.state.order?.id ?? null,'unknown'); }
@@ -244,7 +251,7 @@ export class CheckoutService {
       const merchant = await this.merchantReady(e, signal); assertSandboxMerchant(merchant);
       const { previous, payment } = await this.verifiedRetry(signal);
       const approved = e.state.preview;
-      const fresh = await this.provider.previewOrder(e.state.product, e.intent, context(signal), e.fulfillmentId);
+      const fresh = await this.provider.previewOrder(e.state.product, e.intent, context(signal), e.fulfillmentId, e.deliveryRequired);
       const standard = fresh.fulfillmentOptions?.find(option => option.id === fresh.selectedFulfillmentId);
       if (!this.sameQuote(approved, fresh) || !fresh.amount || fresh.amount.currency !== 'CAD' || fresh.amount.amountMinor > 1495 || standard?.title !== 'Standard') {
         e.state.preview = fresh; e.state.quoteId = null; e.state.quoteExpiresAt = null; e.state.canConfirm = false; e.state.stage = 'blocked'; e.state.message = 'The fresh Standard-delivery quote changed or exceeds C$14.95. The retry was not claimed or dispatched.'; return;
@@ -252,7 +259,7 @@ export class CheckoutService {
       await this.journal.claimAuthorizedRetry(previous, true, payment);
       e.dispatchAttemptId = `provider-authorized-retry-${previous.id}`; e.dispatched = true; e.state.canConfirm = false; e.state.stage = 'dispatching'; e.state.approvedAt = new Date().toISOString(); e.started = Date.now();
       try {
-        const order = await this.provider.dispatchSandbox({ merchantId: merchant.id, sku: e.state.product.sku, quantity: 1, amount: fresh.amount, maxTotalMinor: 1495, fulfillmentId: e.fulfillmentId, approvedAt: e.state.approvedAt, confirmationText: 'Confirm Test Purchase', originalRequest: e.intent.originalRequest }, context(signal));
+        const order = await this.provider.dispatchSandbox({ merchantId: merchant.id, sku: e.state.product.sku, quantity: 1, amount: fresh.amount, maxTotalMinor: 1495, fulfillmentId: e.fulfillmentId, deliveryRequired: e.deliveryRequired, approvedAt: e.state.approvedAt, confirmationText: 'Confirm Test Purchase', originalRequest: e.intent.originalRequest }, context(signal));
         e.state.order = order; e.state.stage = 'processing'; e.state.message = 'The single provider-authorized sandbox retry was dispatched. Only this new order status may now be polled.';
         await this.journal.recordAuthorizedRetry(previous.id, order.id, order.status);
       } catch (error) {

@@ -149,7 +149,8 @@ export class AgnicCheckoutProvider extends AgnicProvider implements CheckoutProv
     if (!alias) throw new ProviderError('TEST_CARD_REQUIRED', 'Configure a confirmed test-card alias through Agnic’s hosted setup first. The default or a real card will never be used.', 409);
     if (input.confirmationText !== 'Confirm Test Purchase' || !Number.isFinite(Date.parse(input.approvedAt))) throw new ProviderError('TEST_CONSENT_REQUIRED', 'Explicit test-purchase confirmation is required.', 403);
     if (!Number.isSafeInteger(input.quantity) || input.quantity < 1 || input.quantity > 10 || !Number.isSafeInteger(input.amount.amountMinor) || !Number.isSafeInteger(input.maxTotalMinor) || input.maxTotalMinor < 0 || input.amount.amountMinor > input.maxTotalMinor || input.amount.amountMinor < 0 || input.amount.currency !== merchant.currency) throw new ProviderError('BUDGET_EXCEEDED', 'The sandbox checkout has an invalid amount, quantity, currency or limit.', 409);
-    const shipTo = isOfficialShopifySandbox(merchant) ? getSandboxShipTo() : null;
+    // The destination is released only for a fulfillment option that needs one.
+    const shipTo = isOfficialShopifySandbox(merchant) && input.deliveryRequired ? getSandboxShipTo() : null;
     return normalizeOrder(await this.#send('/api/autofill/dispatch', context, { merchant_id: input.merchantId, items: [{ sku: input.sku, quantity: input.quantity }], amount_minor: input.amount.amountMinor, currency: input.amount.currency, card_alias_id: alias, user_confirmation_text: input.confirmationText, user_approved_at_iso: input.approvedAt, user_prompt: input.originalRequest, constraints: { max_total_minor: input.maxTotalMinor }, ...(input.fulfillmentId ? { fulfillment_option_id: input.fulfillmentId } : {}), ...(shipTo ? { ship_to: shipTo } : {}) }));
   }
 }

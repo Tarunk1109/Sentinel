@@ -20,7 +20,9 @@ export interface SceneAnalyzer {
 }
 export interface CommerceProvider {
   searchProducts(intent: ProductIntent, context: CallContext): Promise<ProductCandidate[]>;
-  previewOrder(product: ProductCandidate, intent: ProductIntent, context: CallContext, fulfillmentId?: string): Promise<SafePreview>;
+  /** `deliveryRequired` releases the saved destination. Only a fulfillment option that
+   *  reports `requiresAddress` justifies sending it; pickup never does. */
+  previewOrder(product: ProductCandidate, intent: ProductIntent, context: CallContext, fulfillmentId?: string, deliveryRequired?: boolean): Promise<SafePreview>;
   placeOrder(): Promise<never>;
 }
 export interface CheckoutProvider extends CommerceProvider {
